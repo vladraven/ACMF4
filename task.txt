@@ -1,0 +1,180 @@
+Ты выступаешь в роли Senior Python Architect и Scientific Computing Engineer.
+Задача: реализовать с нуля вычислительное ядро математической модели цивилизационного метаболизма ACMF 4.9.3.1 (13-компонентная стохастическая delay-differential система с отражённой диффузией Скорохода, скачками и процессами Хоукса).
+
+=== ПРАВИЛА КОДОГЕНЕРАЦИИ (СТРОГИЙ КОНТРАКТ) ===
+1. Полный вывод кода: Всегда выводить программный код файлов ЦЕЛИКОМ от первой до последней строки. Запрещены сокращения, плейсхолдеры, `pass # TODO` и многоточия.
+2. Никакого хардкода: Внутри классов и функций запрещено зашивать численные константы модели (SID_max, F_max, kappa_s, dt, пороги и т.д.). Все значения приходят строго через объект параметров/конфигурации.
+3. Разделение ответственности:
+   - `model/` — чистые математические функции дрейфа, диффузии, износа, регенерации. Не знает о солверах и тестах.
+   - `solver/` — алгоритмы численной интеграции (Euler-Maruyama, Milstein), кольцевой буфер истории, оператор отражения Скорохода. Не содержит параметров модели.
+   - `analysis/` — спектральный анализ (мгновенный и DDE-спектр), бифуркации, поиск аттракторов и сепаратрис.
+   - `decision/` — каузальный маппинг политик (только через параметры, без прямых модификаций вектора состояния).
+   - `validation/` — сценарии тестов TEST 00–21.
+
+=== МАТЕМАТИЧЕСКАЯ СПЕЦИФИКАЦИЯ ACMF 4.9.3.1 ===
+
+1. Пространство состояний (N_sub = 3, dim = 13):
+   X = [SID^1, SID^2, SID^3, Inst, Ch, Prod, M, F, Scar, ED^1, ED^2, ED^3, RecDebt]^T
+   - SID^k in [-SID_buf, SID_max] (k = 1,2,3)
+   - Inst, Ch, Prod, M, Scar in [0, 1]
+   - F in [0, F_max]
+   - ED^k >= 0, RecDebt >= 0
+   - История: phi(t) in Omega для t in [t0 - max(Delta_t, Delta_ref), t0]
+
+2. Гладкие операторы (Smooth Operators):
+   S+(x; kappa_s) = logaddexp(0, kappa_s * x) / kappa_s
+   S-(x; kappa_s) = -S+(-x; kappa_s)
+
+3. Эффективная регенерация:
+   R_eff = R_0 * (1 - gamma_R * Scar), где gamma_R in [0, 1], R_0 >= 0, Scar in [0, 1]
+
+4. Time-Scale Mismatch (TSM с запаздыванием):
+   TSM(t) = 1 - exp( - theta_A * |dA/dt|_{t-Delta_t} - theta_P * |dProd/dt|_{t-Delta_t} - theta_I * |dInst/dt|_{t-Delta_t} )
+
+5. Эндогенная динамика (Bounded ODE Layer):
+   dInst/dt = [alpha_pos * (R_eff * Ch + gamma_inst * M * G) + ReformImpulse] * (1 - Inst) - [mu_inst + beta_neg * S+(AggSID_true; kappa_s)] * Inst
+   dF/dt = alpha_F * M * G * (F_max - F) - beta_F * S+(SID^3; kappa_s) * F
+   dCh/dt = alpha_Ch * Inst * Prod * (1 - Ch) - (mu_Ch + beta_Ch * TSM) * Ch
+   dProd/dt = alpha_Prod * A * Ch * (1 - Prod) - beta_Prod * S+(SID^2; kappa_s) * Prod
+   dM/dt = alpha_M * Prod * Inst * (1 - M) - mu_M * M
+   dScar/dt = gamma_scar * S+(AggSID_true - Threshold_scar; kappa_s) * (1 - Scar) - mu_scar * Scar
+
+6. Истинный износ (True Wear):
+   W_true^1 = w_11 * (1 - Inst) + w_12 * (1 - Ch) + w_13 * TSM
+   W_true^2 = w_21 * (1 - Prod) + w_22 * (1 - Inst)
+   W_true^3 = w_31 * (F_max - F)/F_max + w_32 * (1 - M)
+
+7. Генерация порядка (Order Generation & ECY Feasibility):
+   Q_1 = p_11 * Inst * R_eff + p_12 * Ch
+   Q_2 = p_21 * Prod + p_22 * A
+   Q_3 = p_31 * M + p_32 * G
+   Q_tilde_k = Q_k / (1 + eta * RecDebt)
+   ECY^k = Capacity_k * [1 - exp(-Q_tilde_k)]   # 0 <= ECY^k < Capacity_k
+
+8. Эпистемический долг (Epistemic Layer):
+   VisibilityGap^k = alpha_mask^k * (1 - V) * (1 - G)
+   W_obs^k = W_true^k * (1 - VisibilityGap^k)
+   dED^k/dt = (W_true^k - W_obs^k) - B_burst(ED^k) * ED^k
+   B_burst(ED) = lambda_burst / [1 + exp(-alpha_burst * (ED - ED_crit))]
+   ED_norm^k = ED^k / (ED^k + ED_scale)
+   AggSID_true = sum(SID^k) / N_sub
+   AggSID_obs = sum(SID^k) / N_sub - ED_impact * sum(ED_norm^k) / N_sub
+
+9. Реформаторский импульс (Reform Impulse с запаздыванием):
+   Awareness = S+(AggSID_obs - RefThresh; kappa_s)
+   ReformImpulse = lambda_ref,0 * (1 - omega_fatigue * Scar) * Awareness * G * exp( -tau_ref * S+( dAggSID_obs/dt|_{t-Delta_ref}; kappa_s ) )
+
+10. Пространственный переток (Spatial Spillover):
+    J_ij = J_tilde_ij / sum_{m!=i}(J_tilde_im) для активных узлов (sum_{j!=i} J_ij = 1), иначе 0.
+    Spillover_i^k = kappa_spill * (SID_max - SID_i^k)/SID_max * sum_{j!=i} [ J_ij * S+(SID_j^k - SID_contagion; kappa_s) ]
+
+11. Процесс Хоукса (Temporal Hawkes):
+    lambda_i^k(t) = lambda_{0,i}^k(Scar_i) + sum_l sum_{m: t_m < t} Gamma_kl * exp(-beta_H * (t - t_m))
+    Обязательное условие: spectral_radius(Gamma / beta_H) < 1
+
+12. Мобилизационный долг и скачки (Recovery Debt & Jumps):
+    K_rec(J_vec, X) = ||J_vec||_2 * [1 + omega_V * V + omega_SID * S+(AggSID_true; kappa_s)]
+    dRecDebt = -mu_rec * RecDebt * dt + K_rec * dN(t)
+    State-dependent jump clipping:
+    J^k = min(J_hat^k, SID_max - SID^k) если J_hat^k > 0
+    J^k = max(J_hat^k, -SID_buf - SID^k) если J_hat^k < 0
+
+13. Дрейф и диффузия SID (Reflected SDE):
+    Delta^k = W_true^k - ECY^k
+    Drift^k = S+(Delta^k; kappa_s) * (SID_max - SID^k)/SID_max + S-(Delta^k; kappa_s) * (SID_buf + SID^k)/SID_buf - rho_k * R_eff * Inst * S+(SID^k; kappa_s) + Spillover^k
+    sigma^k(X) = sigma_0^k * V * [(SID^k + SID_buf) * (SID_max - SID^k)] / (SID_buf * SID_max)
+    dSID^k = Drift^k * dt + sigma^k(X) * dW^k + J^k * dN^k + dL^k - dU^k
+
+14. Дискретный оператор отражения Скорохода:
+    Y_{n+1} = X_n + Drift_n * dt + sigma_n * dW_n + Jump_n
+    X_{n+1} = R_Omega(Y_{n+1}) = Y_{n+1} + L_{lower} - L_{upper}
+    L_{lower} = max(0, -SID_buf - Y_{n+1})
+    L_{upper} = max(0, Y_{n+1} - SID_max)
+
+15. Схема Мильштейна:
+    Поправка: 0.5 * sigma * (d_sigma/d_SID) * (dW^2 - dt)
+    где d_sigma/d_SID = sigma_0 * V * (SID_max - SID_buf - 2*SID) / (SID_buf * SID_max)
+
+16. Анализ устойчивости и бифуркаций:
+    - Мгновенный Якобиан: J_inst = dF/dX
+    - Характеристический оператор DDE: D(lambda) = lambda * I - A_0 - A_1 * exp(-lambda * Delta_t) = 0
+    - EWS-проекция: Z(t) = w_inst^T * (X(t) - X_eq)
+
+=== ДЕРЕВО ПРОЕКТА ===
+ACMF/
+├── pyproject.toml
+├── README.md
+├── run_validation.py
+├── config/
+│   ├── __init__.py
+│   ├── schema.py
+│   ├── loader.py
+│   └── baseline.yaml
+├── acmf/
+│   ├── __init__.py
+│   ├── model/
+│   │   ├── __init__.py
+│   │   ├── state.py
+│   │   ├── parameters.py
+│   │   ├── forcing.py
+│   │   ├── smooth.py
+│   │   ├── dynamics.py
+│   │   ├── metabolism.py
+│   │   ├── epistemic.py
+│   │   ├── hysteresis.py
+│   │   ├── contagion.py
+│   │   └── jumps.py
+│   ├── solver/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── engine.py
+│   │   ├── history.py
+│   │   ├── delay.py
+│   │   ├── reflection.py
+│   │   ├── euler_maruyama.py
+│   │   └── milstein.py
+│   ├── analysis/
+│   │   ├── __init__.py
+│   │   ├── jacobian.py
+│   │   ├── spectrum.py
+│   │   ├── delay_spectrum.py
+│   │   ├── equilibria.py
+│   │   ├── bifurcation.py
+│   │   ├── attractors.py
+│   │   ├── basins.py
+│   │   └── separatrix.py
+│   ├── stochastic/
+│   │   ├── __init__.py
+│   │   ├── hawkes.py
+│   │   ├── diffusion.py
+│   │   └── statistics.py
+│   ├── ews/
+│   │   ├── __init__.py
+│   │   ├── projection.py
+│   │   ├── variance.py
+│   │   ├── autocorrelation.py
+│   │   ├── skewness.py
+│   │   └── recovery_time.py
+│   ├── decision/
+│   │   ├── __init__.py
+│   │   ├── interventions.py
+│   │   ├── causal_mapping.py
+│   │   └── counterfactual.py
+│   └── validation/
+│       ├── __init__.py
+│       ├── framework.py
+│       ├── result.py
+│       ├── test_00_baseline.py ... test_21_solver_independence.py
+└── tests/
+    ├── __init__.py
+    ├── unit/
+    └── integration/
+
+=== ЗАДАНИЕ: ЭТАП 1 (ФУНДАМЕНТ МОДЕЛИ) ===
+Сгенерируй ПОЛНЫЙ рабочий Python-код для первых четырёх файлов проекта:
+1. `acmf/model/smooth.py` — функции `s_plus(x, kappa_s)` через `np.logaddexp` и `s_minus(x, kappa_s)`.
+2. `config/schema.py` — строгая схема конфигурации параметров на Pydantic (с валидаторами неотрицательности, границ [0,1], F_max, SID_max/buf, и спектрального радиуса Хоукса).
+3. `acmf/model/state.py` — класс `StateVector` (типизация 13 компонент, индексация, проверка принадлежности домену Omega).
+4. `acmf/model/parameters.py` — датакласс параметров модели, маппящий проверенную конфигурацию.
+
+Выведи каждый файл целиком, с импортами и докстрингами.

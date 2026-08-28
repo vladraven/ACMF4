@@ -1,0 +1,20 @@
+{
+  "status": "EMPIRICALLY_VALIDATED",
+  "metrics": {
+    "initial_loss": 2.1657530040883555,
+    "final_loss": 2.107563738748641,
+    "r_squared": 0.0,
+    "iterations": 1
+  },
+  "parameters": {
+    "alpha_pos": 1.4737652412742812,
+    "beta_neg": 3.0,
+    "gamma_inst": 0.05,
+    "mu_inst": 0.5,
+    "alpha_Prod": 0.2,
+    "beta_Prod": 1.5,
+    "F_max": 1.0,
+    "SID_buf": 1.0,
+    "SID_max": 3.0
+  }
+}

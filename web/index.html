@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ACMF 4.9.3.1 - Standalone Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="dashboard-container">
+    <header>
+      <div class="header-title">
+        <h1>ACMF 4.9.3.1 Analytics Console</h1>
+        <p>Standalone Offline Mode (No Server Required)</p>
+      </div>
+      <div class="controls">
+        <select id="synthetic-scenario-select">
+          <option value="">-- Select Test --</option>
+          <option value="SYNTH_01">SYNTH_01: Flash Crash</option>
+          <option value="SYNTH_02">SYNTH_02: Cascading Failure</option>
+          <option value="SYNTH_03">SYNTH_03: EWS Monitor</option>
+          <option value="SYNTH_04">SYNTH_04: Policy Rescue</option>
+        </select>
+        <input type="file" id="json-file-input" accept=".json" style="display: none;">
+        <button class="btn" id="load-file-btn">Open Custom JSON</button>
+      </div>
+    </header>
+
+    <div class="metrics-bar">
+      <div class="metric-card">
+        <div class="metric-title">Active Test / Scenario</div>
+        <div class="metric-value" id="val-scenario">N/A</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Simulation Steps</div>
+        <div class="metric-value" id="val-steps">0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Verification Status</div>
+        <div class="metric-value" id="val-test-status" style="color: var(--accent-green);">IDLE</div>
+      </div>
+    </div>
+
+    <div class="grid-charts">
+      <!-- 1. Временные ряды -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Trajectory Dynamics (Time-Series)</div>
+          <div>
+            <select id="series-mode-select">
+              <option value="deficits">Deficits (SID 1, 2, 3)</option>
+              <option value="capacities">Capacities (Inst, Prod, Ch, M)</option>
+              <option value="memory">Scar & Recovery Debt</option>
+              <option value="ews">Early Warning Signals (Var, AR1)</option>
+            </select>
+          </div>
+        </div>
+        <div class="canvas-wrapper">
+          <canvas id="timeSeriesCanvas"></canvas>
+        </div>
+        <div class="legend" id="timeseries-legend"></div>
+      </div>
+
+      <!-- 2. Фазовый портрет -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">2D Phase Portrait</div>
+          <div>
+            <select id="phase-plane-select">
+              <option value="sid1_inst">Inst vs SID 1</option>
+              <option value="sid2_inst">Inst vs SID 2</option>
+              <option value="sid1_sid2">SID 2 vs SID 1</option>
+              <option value="f_prod">Prod vs F</option>
+            </select>
+          </div>
+        </div>
+        <div class="canvas-wrapper">
+          <canvas id="phasePortraitCanvas"></canvas>
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-color" style="background: #5cb85c;"></div> Start</div>
+          <div class="legend-item"><div class="legend-color" style="background: #bf616a;"></div> End</div>
+          <div class="legend-item"><div class="legend-color" style="background: #5e81ac;"></div> Trajectory</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Подключение данных напрямую без fetch/сервера -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
