@@ -27,6 +27,13 @@ class CalibrationResult:
     r_squared: float
     success: bool
     iterations: int
+    # ИСПРАВЛЕНО: раньше исключения при симуляции молча гасились в
+    # CalibrationLoss без единого следа. Теперь статистика исключений
+    # пробрасывается в результат калибровки, чтобы run_calibration.py
+    # мог честно отчитаться, если бóльшая часть популяции DE не смогла
+    # даже проинтегрироваться (см. exception_count/exception_reasons).
+    exception_count: int
+    exception_reasons: dict[str, int]
 
 
 class EmpiricalOptimizer:
@@ -138,4 +145,6 @@ class EmpiricalOptimizer:
             r_squared=r2,
             success=bool(res.success),
             iterations=int(res.nit),
+            exception_count=self.loss_engine.exception_count,
+            exception_reasons=dict(self.loss_engine.exception_reasons),
         )

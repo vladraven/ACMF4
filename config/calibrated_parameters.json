@@ -1,126 +1,20 @@
 {
-  "status": "VALIDATION_DEFAULT_CONFIGURATION",
+  "status": "EMPIRICALLY_VALIDATED",
+  "metrics": {
+    "initial_loss": 2.1657530040883555,
+    "final_loss": 2.107563738748641,
+    "r_squared": 0.0,
+    "iterations": 1
+  },
   "parameters": {
-    "dimensions": {
-      "N_sub": 3,
-      "F_max": 1.0,
-      "SID_buf": 1.0,
-      "SID_max": 3.0,
-      "kappa_s": 10.0
-    },
-    "dynamics": {
-      "alpha_pos": 1.0,
-      "beta_neg": 1.0,
-      "gamma_inst": 0.2,
-      "mu_inst": 0.1,
-      "alpha_F": 0.5,
-      "beta_F": 0.5,
-      "alpha_Ch": 0.8,
-      "beta_Ch": 0.4,
-      "mu_Ch": 0.05,
-      "alpha_Prod": 1.0,
-      "beta_Prod": 0.5,
-      "alpha_M": 0.5,
-      "mu_M": 0.1,
-      "gamma_scar": 0.3,
-      "mu_scar": 0.02,
-      "Threshold_scar": 0.5,
-      "gamma_R": 0.5,
-      "theta_A": 0.1,
-      "theta_P": 0.1,
-      "theta_I": 0.1
-    },
-    "metabolism": {
-      "w": [
-        [
-          0.4,
-          0.4,
-          0.2
-        ],
-        [
-          0.5,
-          0.5,
-          0.0
-        ],
-        [
-          0.6,
-          0.4,
-          0.0
-        ]
-      ],
-      "p": [
-        [
-          0.7,
-          0.3
-        ],
-        [
-          0.6,
-          0.4
-        ],
-        [
-          0.5,
-          0.5
-        ]
-      ],
-      "eta": 0.1,
-      "Capacity": [
-        1.0,
-        1.0,
-        1.0
-      ],
-      "rho": [
-        0.2,
-        0.2,
-        0.2
-      ],
-      "sigma_0": [
-        0.1,
-        0.1,
-        0.1
-      ]
-    },
-    "epistemic": {
-      "alpha_mask": [
-        0.3,
-        0.3,
-        0.3
-      ],
-      "lambda_burst": 1.0,
-      "alpha_burst": 5.0,
-      "ED_crit": 0.5,
-      "ED_scale": 1.0,
-      "ED_impact": 0.5,
-      "RefThresh": 0.2,
-      "lambda_ref_0": 0.5,
-      "omega_fatigue": 0.5,
-      "tau_ref": 1.0,
-      "Delta_t": 0.5,
-      "Delta_ref": 0.5
-    },
-    "contagion": {
-      "kappa_spill": 0.1,
-      "SID_contagion": 0.5,
-      "beta_H": 2.0,
-      "Gamma": [
-        [
-          0.2,
-          0.05,
-          0.05
-        ],
-        [
-          0.05,
-          0.2,
-          0.05
-        ],
-        [
-          0.05,
-          0.05,
-          0.2
-        ]
-      ],
-      "mu_rec": 0.1,
-      "omega_V": 0.2,
-      "omega_SID": 0.2
-    }
+    "alpha_pos": 1.4737652412742812,
+    "beta_neg": 3.0,
+    "gamma_inst": 0.05,
+    "mu_inst": 0.5,
+    "alpha_Prod": 0.2,
+    "beta_Prod": 1.5,
+    "F_max": 1.0,
+    "SID_buf": 1.0,
+    "SID_max": 3.0
   }
 }
