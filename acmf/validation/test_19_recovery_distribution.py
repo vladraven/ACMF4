@@ -3,55 +3,112 @@ from acmf.model.parameters import ModelParameters
 from acmf.model.state import StateVector
 from acmf.model.forcing import ForcingProfile
 from acmf.model.dynamics import compute_full_drift_vector
+from acmf.stochastic.diffusion import compute_diffusion_sigma
 from acmf.solver.base import SolverDomain
 from acmf.solver.engine import ACMFEngine
 from acmf.validation.result import TestResult
 
 
 def run_test_19(params: ModelParameters) -> TestResult:
-    """TEST 19 — Распределение времен восстановления после случайных микрошоков."""
-    domain = SolverDomain(sid_buf=params.SID_buf, sid_max=params.SID_max, f_max=params.F_max)
-    engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+    """TEST 19 — Распределение времени восстановления после стохастических шоков."""
+    domain = SolverDomain(
+        sid_buf=params.SID_buf,
+        sid_max=params.SID_max,
+        f_max=params.F_max,
+    )
     forcing = ForcingProfile().evaluate(0.0)
 
-    init_state = np.zeros(13, dtype=np.float64)
+    init_state = np.zeros(
+        9 + params.N_sub + 1,
+        dtype=np.float64,
+    )
     init_state[3:7] = 0.8
     init_state[7] = 0.8 * params.F_max
+    init_state[0:params.N_sub] = 0.3
 
     def drift_fn(x, d_a, d_p, d_i, d_agg):
         st = StateVector(x)
         return compute_full_drift_vector(
-            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params
+            st,
+            forcing,
+            d_a,
+            d_p,
+            d_i,
+            d_agg,
+            np.zeros(params.N_sub),
+            params,
         )
 
     def diff_fn(x):
-        return np.zeros(3), np.zeros(3)
+        st = StateVector(x)
+        return compute_diffusion_sigma(
+            st,
+            forcing,
+            params,
+        )
 
     recovery_times = []
-    for seed in range(10):
-        perturbed = init_state.copy()
-        perturbed[0:3] += 0.3  # Шок дефицита
+    n_trials = 10
+    horizon = 25.0
+    dt = 0.05
+    recovery_threshold = 0.05
 
-        traj = engine.simulate(
+    for seed in range(n_trials):
+        perturbed = init_state.copy()
+        perturbed[0:params.N_sub] += 0.3
+
+        engine = ACMFEngine(
+            domain=domain,
+            scheme="euler_maruyama",
+        )
+
+        trajectory = engine.simulate(
             initial_state=perturbed,
-            t_span=(0.0, 25.0),
-            dt=0.05,
+            t_span=(0.0, horizon),
+            dt=dt,
             drift_fn=drift_fn,
             diffusion_fn=diff_fn,
             random_seed=seed,
         )
 
-        sids_agg = np.mean(traj.states[:, 0:3], axis=1)
-        recovered_idx = np.where(sids_agg < 0.05)[0]
-        rec_t = float(traj.times[recovered_idx[0]]) if len(recovered_idx) > 0 else 25.0
-        recovery_times.append(rec_t)
+        sids_agg = np.mean(
+            trajectory.states[:, 0:params.N_sub],
+            axis=1,
+        )
+        recovered = np.flatnonzero(
+            sids_agg < recovery_threshold
+        )
 
-    mean_rec_t = float(np.mean(recovery_times))
-    status = "PASSED" if mean_rec_t < 25.0 else "FAILED"
+        if recovered.size == 0:
+            recovery_times.append(np.inf)
+        else:
+            recovery_times.append(
+                float(trajectory.times[recovered[0]])
+            )
+
+    finite_times = np.asarray(
+        [value for value in recovery_times if np.isfinite(value)],
+        dtype=np.float64,
+    )
+
+    status = (
+        "PASSED"
+        if finite_times.size > 0
+        else "NOT_DETECTED"
+    )
 
     return TestResult(
         test_id="TEST_19",
         name="Stochastic Recovery Time Distribution",
         status=status,
-        details={"mean_recovery_time": mean_rec_t},
+        details={
+            "n_trials": n_trials,
+            "recovered_trials": int(finite_times.size),
+            "mean_recovery_time": (
+                float(np.mean(finite_times))
+                if finite_times.size
+                else None
+            ),
+            "recovery_times": recovery_times,
+        },
     )

@@ -10,58 +10,81 @@ from acmf.validation.result import TestResult
 
 
 def run_test_20(params: ModelParameters) -> TestResult:
-    """TEST 20 — Контрфактическое моделирование каузальных регуляторных интервенций."""
-    domain = SolverDomain(sid_buf=params.SID_buf, sid_max=params.SID_max, f_max=params.F_max)
-    engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+    """TEST 20 — Контрфактическая оценка каузальной интервенции."""
+    domain = SolverDomain(
+        sid_buf=params.SID_buf,
+        sid_max=params.SID_max,
+        f_max=params.F_max,
+    )
     forcing = ForcingProfile().evaluate(0.0)
 
-    # Кризисное начальное состояние
-    init_state = np.zeros(13, dtype=np.float64)
-    init_state[0:3] = 1.5
+    init_state = np.zeros(
+        9 + params.N_sub + 1,
+        dtype=np.float64,
+    )
+    init_state[0:params.N_sub] = 1.5
     init_state[3:7] = 0.3
 
-    # 1. Траектория без вмешательства (Baseline)
-    def drift_baseline(x, d_a, d_p, d_i, d_agg):
-        st = StateVector(x)
-        return compute_full_drift_vector(st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params)
-
-    traj_base = engine.simulate(
-        initial_state=init_state,
-        t_span=(0.0, 15.0),
-        dt=0.05,
-        drift_fn=drift_baseline,
-        diffusion_fn=lambda x: (np.zeros(3), np.zeros(3)),
+    policy = PolicyIntervention(
+        u_reform=0.8,
+        u_capacity=0.5,
+        u_mitigation=0.3,
+    )
+    policy_params = apply_causal_policy_mapping(
+        params,
+        policy,
     )
 
-    # 2. Траектория с регуляторной интервенцией u (Реформа + Наращивание емкости)
-    policy = PolicyIntervention(u_reform=0.8, u_capacity=0.5, u_mitigation=0.3)
-    policy_params = apply_causal_policy_mapping(params, policy)
+    def simulate(model_params):
+        engine = ACMFEngine(
+            domain=domain,
+            scheme="euler_maruyama",
+        )
 
-    def drift_policy(x, d_a, d_p, d_i, d_agg):
-        st = StateVector(x)
-        return compute_full_drift_vector(st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), policy_params)
+        def drift_fn(x, d_a, d_p, d_i, d_agg):
+            st = StateVector(x)
+            return compute_full_drift_vector(
+                st,
+                forcing,
+                d_a,
+                d_p,
+                d_i,
+                d_agg,
+                np.zeros(model_params.N_sub),
+                model_params,
+            )
 
-    traj_policy = engine.simulate(
-        initial_state=init_state,
-        t_span=(0.0, 15.0),
-        dt=0.05,
-        drift_fn=drift_policy,
-        diffusion_fn=lambda x: (np.zeros(3), np.zeros(3)),
-    )
+        def diff_fn(x):
+            return np.zeros(model_params.N_sub), np.zeros(model_params.N_sub)
 
-    final_inst_base = traj_base.states[-1, 3]
-    final_inst_policy = traj_policy.states[-1, 3]
+        return engine.simulate(
+            initial_state=init_state,
+            t_span=(0.0, 15.0),
+            dt=0.05,
+            drift_fn=drift_fn,
+            diffusion_fn=diff_fn,
+        )
 
-    # Политика обязана улучшить институциональное состояние относительно baseline
-    is_effective = final_inst_policy > final_inst_base
-    status = "PASSED" if is_effective else "FAILED"
+    baseline = simulate(params)
+    intervention = simulate(policy_params)
+
+    baseline_inst = float(baseline.states[-1, 3])
+    intervention_inst = float(intervention.states[-1, 3])
+    baseline_sid = float(np.mean(baseline.states[-1, 0:params.N_sub]))
+    intervention_sid = float(np.mean(intervention.states[-1, 0:params.N_sub]))
+
+    effect = intervention_inst - baseline_inst
+    status = "PASSED" if effect > 0.0 else "FAILED"
 
     return TestResult(
         test_id="TEST_20",
         name="Counterfactual Causal Policy Evaluation",
         status=status,
         details={
-            "final_inst_baseline": float(final_inst_base),
-            "final_inst_policy": float(final_inst_policy),
+            "final_inst_baseline": baseline_inst,
+            "final_inst_policy": intervention_inst,
+            "institutional_effect": effect,
+            "final_sid_baseline": baseline_sid,
+            "final_sid_policy": intervention_sid,
         },
     )
