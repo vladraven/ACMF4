@@ -3,6 +3,7 @@ from acmf.model.parameters import ModelParameters
 from acmf.model.state import StateVector
 from acmf.model.forcing import ForcingProfile
 from acmf.model.dynamics import compute_full_drift_vector
+from acmf.model.lag_estimation import estimate_lagged_derivatives
 from acmf.analysis.bifurcation import ContinuationEngine
 from acmf.validation.result import TestResult
 
@@ -21,9 +22,16 @@ def run_test_04(params: ModelParameters) -> TestResult:
             )
 
         def drift_full(x_curr: np.ndarray, x_delayed: np.ndarray) -> np.ndarray:
+            # ИСПРАВЛЕНО: x_delayed раньше игнорировался (см. TEST_05).
+            # Здесь r0_val — параметр continuation-скана (не задержка),
+            # поэтому лаг для оценки производных берём из params.Delta_t.
             st = StateVector(x_curr)
+            d_a_dt, d_prod_dt, d_inst_dt, d_agg_obs_dt = estimate_lagged_derivatives(
+                x_curr, x_delayed, float(params.Delta_t), params
+            )
             return compute_full_drift_vector(
-                st, forcing, 0.0, 0.0, 0.0, 0.0, np.zeros(params.N_sub), params
+                st, forcing, d_a_dt, d_prod_dt, d_inst_dt, d_agg_obs_dt,
+                np.zeros(params.N_sub), params
             )
 
         return drift_det, drift_full

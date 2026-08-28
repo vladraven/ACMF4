@@ -44,6 +44,7 @@ class ACMFEngine:
         delay_t: float = 0.0,
         delay_ref: float = 0.0,
         random_seed: int | None = None,
+        d_a_dt_fn: Callable[[float], float] | None = None,
     ) -> TrajectoryResult:
         """
         Запускает цикл численной симуляции траектории.
@@ -69,7 +70,15 @@ class ACMFEngine:
             t_curr = times[step_idx]
 
             # 1. Извлечение запаздывающих производных
-            d_a_dt = 0.0
+            # ИСПРАВЛЕНО: раньше d_a_dt был захардкожен в 0.0 без лага,
+            # из-за чего theta_A-слагаемое TSM было мёртвым кодом
+            # независимо от реальной динамики A(t). A(t) — экзогенное
+            # воздействие, не компонента state vector, поэтому у него
+            # нет истории в HistoryBuffer; вместо этого берём его
+            # производную из явно переданного d_a_dt_fn(t) (по умолчанию
+            # постоянный forcing => 0.0, но теперь это явное допущение,
+            # а не немая заглушка).
+            d_a_dt = float(d_a_dt_fn(t_curr)) if d_a_dt_fn is not None else 0.0
             d_prod_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=5)
             d_inst_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=3)
             d_agg_obs_dt = (

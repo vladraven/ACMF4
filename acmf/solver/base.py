@@ -18,6 +18,12 @@ class DiagnosticStep:
     upper_local_time: np.ndarray
     raw_overshoot: np.ndarray
     reflected: bool
+    # ИСПРАВЛЕНО: раньше клемп по Inst/Ch/Prod/M/F/Scar не диагностировался
+    # вообще (в отличие от SID) — нарушение TEST_01 ("число отражений...
+    # для всех bounded-переменных") и молчаливое "Hardcoded clamp
+    # запрещён" (§17 документа). Теперь фиксируется явно.
+    ode_clamp_overshoot: np.ndarray
+    ode_clamped: bool
 
 
 class StochasticStepScheme(ABC):

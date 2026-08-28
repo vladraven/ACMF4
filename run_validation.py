@@ -108,7 +108,16 @@ def main() -> None:
 
     results = framework.run_all()
     for res in results:
-        status_flag = "[✓] PASS" if res.status == "PASSED" else "[✗] FAIL"
+        # ИСПРАВЛЕНО: NOT_DETECTED — легитимный, отдельный от FAILED статус
+        # (см. §TEST04 документа: "отсутствие Saddle-Node в выбранном
+        # диапазоне не является ошибкой модели"). Раньше он визуально
+        # схлопывался в "[✗] FAIL" наравне с настоящими провалами.
+        if res.status == "PASSED":
+            status_flag = "[✓] PASS"
+        elif res.status == "NOT_DETECTED":
+            status_flag = "[•] N/D "
+        else:
+            status_flag = "[✗] FAIL"
         print(f"{status_flag} | {res.test_id}: {res.name}")
         if res.details:
             print(f"      Metrics: {res.details}")

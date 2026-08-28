@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
-import numpy as np
+import math
 
 
 @dataclass(frozen=True)
@@ -13,18 +13,28 @@ class ForcingState:
     dA_dt: float = 0.0
 
     def validate(self) -> None:
+        values = (self.A, self.R_0, self.V, self.G, self.dA_dt)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Forcing содержит NaN или бесконечность")
         if self.A < 0.0:
             raise ValueError(f"Forcing A должно быть >= 0, получено {self.A}")
         if self.R_0 < 0.0:
-            raise ValueError(f"Forcing R_0 должно быть >= 0, получено {self.R_0}")
+            raise ValueError(
+                f"Forcing R_0 должно быть >= 0, получено {self.R_0}"
+            )
         if not (0.0 <= self.V <= 1.0):
-            raise ValueError(f"Forcing V должно быть в [0, 1], получено {self.V}")
+            raise ValueError(
+                f"Forcing V должно быть в [0, 1], получено {self.V}"
+            )
         if not (0.0 <= self.G <= 1.0):
-            raise ValueError(f"Forcing G должно быть в [0, 1], получено {self.G}")
+            raise ValueError(
+                f"Forcing G должно быть в [0, 1], получено {self.G}"
+            )
 
 
 class ForcingProfile:
     """Временной профиль экзогенных функций."""
+
     def __init__(
         self,
         A_fn: Callable[[float], float] | None = None,
@@ -38,6 +48,10 @@ class ForcingProfile:
         self._V_fn = V_fn or (lambda t: 1.0)
         self._G_fn = G_fn or (lambda t: 1.0)
         self._dA_dt_fn = dA_dt_fn or (lambda t: 0.0)
+
+    @property
+    def dA_dt_fn(self) -> Callable[[float], float]:
+        return self._dA_dt_fn
 
     def evaluate(self, t: float) -> ForcingState:
         state = ForcingState(

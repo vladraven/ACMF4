@@ -49,6 +49,12 @@ def run_test_01(params: ModelParameters) -> TestResult:
 
     all_in_domain = all(StateVector(s).is_in_domain(params) for s in traj.states)
     reflections_count = sum(1 for d in traj.diagnostics if d.reflected)
+    # ИСПРАВЛЕНО: теперь отслеживается и отчитывается клемп по
+    # Inst/Ch/Prod/M/F/Scar — ранее эти события не диагностировались
+    # вовсе, хотя §17 документа и сам TEST_01 требуют учёта overshoot
+    # по всем bounded-переменным, а не только по SID.
+    ode_clamp_count = sum(1 for d in traj.diagnostics if d.ode_clamped)
+    max_ode_overshoot = float(max((d.ode_clamp_overshoot.max() for d in traj.diagnostics), default=0.0))
 
     status = "PASSED" if all_in_domain and reflections_count > 0 else "FAILED"
 
@@ -56,5 +62,10 @@ def run_test_01(params: ModelParameters) -> TestResult:
         test_id="TEST_01",
         name="Skorokhod Domain Invariance",
         status=status,
-        details={"reflections_count": reflections_count, "domain_preserved": all_in_domain},
+        details={
+            "reflections_count": reflections_count,
+            "domain_preserved": all_in_domain,
+            "ode_clamp_count": ode_clamp_count,
+            "max_ode_overshoot": max_ode_overshoot,
+        },
     )

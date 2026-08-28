@@ -36,9 +36,23 @@ class ValidationFramework:
         if not all(statuses.get(t) == "PASSED" for t in math_tests):
             raise RuntimeError("Система не прошла базовую математическую валидацию.")
 
-        # Уровень 2: Динамическая валидация (TEST 02, 03, 06, 07, 17, 18)
-        dyn_tests = ["TEST_02", "TEST_03", "TEST_06", "TEST_07", "TEST_17", "TEST_18"]
-        if not all(statuses.get(t) in ["PASSED", "NOT_DETECTED"] for t in dyn_tests):
+        # Уровень 2: Динамическая валидация
+        # ИСПРАВЛЕНО: раньше TEST_04, TEST_05, TEST_09, TEST_10, TEST_20
+        # вообще не участвовали в расчёте уровня — итоговый статус был
+        # слеп к их реальному провалу (в частности к TEST_05, который
+        # до фикса lag_estimation гарантированно фейлился).
+        # TEST_04/05 по духу §TEST04/§TEST05 документа допускают
+        # NOT_DETECTED как легитимный исход (отсутствие бифуркации в
+        # скане — не ошибка модели). TEST_09/10/20 такого допущения не
+        # имеют и должны реально PASSED.
+        dyn_tests_allow_not_detected = ["TEST_04", "TEST_05"]
+        dyn_tests_require_pass = [
+            "TEST_02", "TEST_03", "TEST_06", "TEST_07", "TEST_17", "TEST_18",
+            "TEST_09", "TEST_10", "TEST_20",
+        ]
+        if not all(statuses.get(t) in ["PASSED", "NOT_DETECTED"] for t in dyn_tests_allow_not_detected):
+            return "MATHEMATICALLY_VALIDATED"
+        if not all(statuses.get(t) == "PASSED" for t in dyn_tests_require_pass):
             return "MATHEMATICALLY_VALIDATED"
 
         # Уровень 3: Стохастическая валидация (TEST 08, 11, 12, 13, 14, 15, 19)
