@@ -35,6 +35,10 @@ class SimulationJSONExporter:
         out_file.parent.mkdir(parents=True, exist_ok=True)
 
         payload = {
+            # Every payload from this exporter comes from ACMFEngine.simulate,
+            # never from an external/observational source — mark it explicitly
+            # so CalibrationDataset.from_file cannot mistake it for real data.
+            "is_synthetic": True,
             "metadata": metadata or {},
             "times": trajectory.times,
             "states": {

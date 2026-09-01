@@ -14,7 +14,7 @@ from config.schema import (
     ContagionAndHawkesConfig,
 )
 from acmf.model.parameters import ModelParameters
-from acmf.calibration.dataset import EmpiricalDataset
+from acmf.calibration.dataset import CalibrationDataset
 from acmf.calibration.optimizer import EmpiricalOptimizer, ParameterBounds
 from acmf.export.json_exporter import NumpyJSONEncoder
 
@@ -58,8 +58,11 @@ def main() -> None:
         print(f"[!] Файл {data_source} не найден. Сначала запустите: python run_scenario.py")
         return
 
-    print(f"Загрузка эмпирического датасета из {data_source}...")
-    dataset = EmpiricalDataset.from_synthetic_or_file(data_source)
+    print(f"Загрузка датасета калибровки из {data_source}...")
+    dataset = CalibrationDataset.from_file(data_source)
+    if dataset.is_synthetic:
+        print("    [!] Датасет помечен как СИНТЕТИЧЕСКИЙ — это калибровка на "
+              "модельных, а не эмпирических данных.")
 
     optimizer = EmpiricalOptimizer(dataset=dataset, base_params=base_params)
     print("Запуск глобальной оптимизации Differential Evolution...")

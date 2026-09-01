@@ -1,0 +1,488 @@
+diff --git a/acmf/analysis/delay_spectrum.py b/acmf/analysis/delay_spectrum.py
+index f6bbaca..2f61735 100644
+--- a/acmf/analysis/delay_spectrum.py
++++ b/acmf/analysis/delay_spectrum.py
+@@ -22,6 +22,22 @@ class DelaySpectrumResult:
+     is_stable: bool
+ 
+ 
++class DelaySpectrumSolverError(RuntimeError):
++    """
++    Поднимается, когда сеточный поиск не нашёл ни одного корня
++    трансцендентного характеристического уравнения в заданном окне.
++
++    Раньше на этот случай существовал fallback: eigvals(A0 + A1),
++    то есть собственные числа обычной (не запаздывающей) матрицы —
++    математически другой объект, корректный только в пределе Δ→0.
++    Он подписывался как DelaySpectrumResult без каких-либо пометок,
++    так что вызывающий код не мог отличить настоящий корень DDE от
++    этого приближения. Такая подмена недопустима для теста, который
++    заявляет доказательность на уровне анализа устойчивости —
++    поэтому теперь это явная ошибка, а не тихий fallback.
++    """
++
++
+ class DelaySpectrumSolver:
+     """
+     Численный решатель трансцендентного характеристического уравнения:
+@@ -52,7 +68,16 @@ class DelaySpectrumSolver:
+         a_1: np.ndarray,
+         delay: float,
+     ) -> DelaySpectrumResult:
+-        """Сканирует спектральное окно и находит уникальные корни характеристического оператора."""
++        """
++        Сканирует спектральное окно и находит уникальные корни
++        характеристического оператора.
++
++        Поднимает DelaySpectrumSolverError, если ни один корень не
++        найден в окне (lambda_min..lambda_max, -omega_max..omega_max)
++        с заданным tolerance — вместо того чтобы молча вернуть
++        собственные числа A0+A1. Расширение окна поиска или допуска —
++        осознанное решение вызывающего кода, а не решателя.
++        """
+         cfg = self.config
+         re_grid = np.linspace(cfg.lambda_min, cfg.lambda_max, cfg.grid_re_points)
+         im_grid = np.linspace(-cfg.omega_max, cfg.omega_max, cfg.grid_im_points)
+@@ -75,9 +100,15 @@ class DelaySpectrumSolver:
+                         found_roots.append(root)
+ 
+         if not found_roots:
+-            # Резервный расчет мгновенного корня
+-            fallback = np.linalg.eigvals(a_0 + a_1)
+-            found_roots = [complex(x) for x in fallback]
++            raise DelaySpectrumSolverError(
++                "Не найдено ни одного корня характеристического уравнения "
++                f"DDE в окне Re∈[{cfg.lambda_min}, {cfg.lambda_max}], "
++                f"Im∈[-{cfg.omega_max}, {cfg.omega_max}] с tolerance="
++                f"{cfg.tolerance} (delay={delay}). Это не означает, что "
++                "корней не существует — возможно, окно/допуск/сетка "
++                "недостаточны для этой delay. Решение не подменяется "
++                "собственными числами A0+A1."
++            )
+ 
+         roots_arr = np.array(found_roots, dtype=np.complex128)
+         crit_idx = int(np.argmax(np.real(roots_arr)))
+@@ -88,4 +119,4 @@ class DelaySpectrumSolver:
+             roots=roots_arr,
+             critical_root=crit_root,
+             is_stable=is_stable,
+-        )
+\ No newline at end of file
++        )
+diff --git a/acmf/analysis/jacobian.py b/acmf/analysis/jacobian.py
+index e3bf476..90fd7aa 100644
+--- a/acmf/analysis/jacobian.py
++++ b/acmf/analysis/jacobian.py
+@@ -2,6 +2,21 @@ from typing import Callable
+ import numpy as np
+ 
+ 
++def _scaled_step(x: np.ndarray, eps: float) -> np.ndarray:
++    """
++    Возвращает вектор шагов конечных разностей, масштабированных по
++    величине каждой компоненты: eps_j = eps * max(1, |x_j|).
++
++    Фиксированный абсолютный шаг корректен только когда все компоненты
++    состояния ~O(1). Компоненты ACMF (SID, F и т.д.) имеют разные
++    характерные масштабы, поэтому единый абсолютный eps даёт разную
++    обусловленность производной по разным координатам: либо избыточную
++    ошибку усечения (шаг слишком мал относительно |x_j|), либо ошибку
++    сокращения (шаг слишком велик). Относительный шаг выравнивает это.
++    """
++    return eps * np.maximum(1.0, np.abs(x))
++
++
+ def compute_finite_difference_jacobian(
+     f: Callable[[np.ndarray], np.ndarray],
+     x: np.ndarray,
+@@ -16,12 +31,14 @@ def compute_finite_difference_jacobian(
+     dim_out = len(f0)
+     jac = np.zeros((dim_out, dim), dtype=np.float64)
+ 
++    steps = _scaled_step(x, eps)
++
+     for j in range(dim):
+         dx = np.zeros(dim, dtype=np.float64)
+-        dx[j] = eps
++        dx[j] = steps[j]
+         f_plus = f(x + dx)
+         f_minus = f(x - dx)
+-        jac[:, j] = (f_plus - f_minus) / (2.0 * eps)
++        jac[:, j] = (f_plus - f_minus) / (2.0 * steps[j])
+ 
+     return jac
+ 
+@@ -35,25 +52,32 @@ def compute_dde_jacobians(
+     Вычисляет матрицы линеаризации DDE системы в точке равновесия:
+     dx/dt = A_0 * x(t) + A_1 * x(t - Delta_t)
+     где A_0 = dF/dX(t), A_1 = dF/dX(t - Delta_t).
++
++    Обе якобиевы матрицы линеаризуются в одной и той же точке
++    равновесия x_eq (текущее и запаздывающее состояние совпадают на
++    равновесии), поэтому используется общий вектор масштабированных
++    шагов steps.
+     """
+     dim = len(x_eq)
+     a_0 = np.zeros((dim, dim), dtype=np.float64)
+     a_1 = np.zeros((dim, dim), dtype=np.float64)
+ 
+-    # Вычисление A_0
++    steps = _scaled_step(x_eq, eps)
++
++    # Вычисление A_0 — производная по текущему состоянию x(t).
+     for j in range(dim):
+         dx = np.zeros(dim, dtype=np.float64)
+-        dx[j] = eps
++        dx[j] = steps[j]
+         f_plus = full_f_fn(x_eq + dx, x_eq)
+         f_minus = full_f_fn(x_eq - dx, x_eq)
+-        a_0[:, j] = (f_plus - f_minus) / (2.0 * eps)
++        a_0[:, j] = (f_plus - f_minus) / (2.0 * steps[j])
+ 
+-    # Вычисление A_1
++    # Вычисление A_1 — производная по запаздывающему состоянию x(t-Delta_t).
+     for j in range(dim):
+         dx = np.zeros(dim, dtype=np.float64)
+-        dx[j] = eps
++        dx[j] = steps[j]
+         f_plus = full_f_fn(x_eq, x_eq + dx)
+         f_minus = full_f_fn(x_eq, x_eq - dx)
+-        a_1[:, j] = (f_plus - f_minus) / (2.0 * eps)
++        a_1[:, j] = (f_plus - f_minus) / (2.0 * steps[j])
+ 
+-    return a_0, a_1
+\ No newline at end of file
++    return a_0, a_1
+diff --git a/acmf/calibration/dataset.py b/acmf/calibration/dataset.py
+index 0cf3596..5fb845a 100644
+--- a/acmf/calibration/dataset.py
++++ b/acmf/calibration/dataset.py
+@@ -5,21 +5,36 @@ import json
+ 
+ 
+ @dataclass(frozen=True)
+-class EmpiricalDataset:
+-    """Контейнер эмпирических наблюдаемых временных рядов."""
++class CalibrationDataset:
++    """
++    Контейнер наблюдаемых временных рядов для калибровки.
++
++    Переименовано из EmpiricalDataset: класс в равной мере грузит и
++    синтетические, и файловые ряды (см. is_synthetic), и прежнее имя
++    вводило в заблуждение относительно происхождения данных.
++    """
+     times: np.ndarray
+     sid_obs: np.ndarray     # Форма (N, 3)
+     inst_obs: np.ndarray    # Форма (N,)
+     prod_obs: np.ndarray    # Форма (N,)
+     weights: np.ndarray     # Веса компонент при расчете ошибки
++    is_synthetic: bool      # True, если ряд сгенерирован моделью/тестом, а не получен извне
++    source_path: Path       # Путь к исходному JSON, для трассируемости отчёта калибровки
+ 
+     @classmethod
+-    def from_synthetic_or_file(
++    def from_file(
+         cls,
+         json_path: str | Path,
+         weights: list[float] | None = None,
+-    ) -> "EmpiricalDataset":
+-        """Загружает наблюдаемые ряды из JSON-файла."""
++    ) -> "CalibrationDataset":
++        """
++        Загружает наблюдаемые ряды из JSON-файла.
++
++        Файл должен содержать явный булев маркер "is_synthetic" на
++        верхнем уровне. Он не выводится по умолчанию и не угадывается
++        по форме JSON, чтобы отчёт калибровки не мог случайно
++        подписать синтетический прогон как эмпирические данные.
++        """
+         path = Path(json_path)
+         if not path.exists():
+             raise FileNotFoundError(f"Файл данных не найден: {path}")
+@@ -27,7 +42,16 @@ class EmpiricalDataset:
+         with open(path, "r", encoding="utf-8") as f:
+             raw = json.load(f)
+ 
+-        # Поддержка структуры как прямого экспорта, так и синтетических тестов
++        if "is_synthetic" not in raw:
++            raise ValueError(
++                f"{path}: отсутствует обязательное поле верхнего уровня "
++                "'is_synthetic' (true/false). Источник данных должен быть "
++                "явно маркирован перед использованием в калибровке."
++            )
++
++        is_synthetic = bool(raw["is_synthetic"])
++
++        # Поддержка структуры как прямого экспорта, так и синтетических тестов.
+         if "tests" in raw and len(raw["tests"]) > 0:
+             data_block = raw["tests"][0]
+         else:
+@@ -52,4 +76,6 @@ class EmpiricalDataset:
+             inst_obs=inst,
+             prod_obs=prod,
+             weights=w,
+-        )
+\ No newline at end of file
++            is_synthetic=is_synthetic,
++            source_path=path,
++        )
+diff --git a/acmf/calibration/loss.py b/acmf/calibration/loss.py
+index 63368a7..bfed5ce 100644
+--- a/acmf/calibration/loss.py
++++ b/acmf/calibration/loss.py
+@@ -2,7 +2,7 @@ import logging
+ from collections import Counter
+ from typing import Callable
+ import numpy as np
+-from acmf.calibration.dataset import EmpiricalDataset
++from acmf.calibration.dataset import CalibrationDataset
+ from acmf.model.parameters import ModelParameters
+ from acmf.model.forcing import ForcingProfile
+ from acmf.model.dynamics import compute_full_drift_vector
+@@ -18,7 +18,7 @@ class CalibrationLoss:
+ 
+     def __init__(
+         self,
+-        dataset: EmpiricalDataset,
++        dataset: CalibrationDataset,
+         base_params: ModelParameters,
+         forcing_profile: ForcingProfile | None = None,
+     ) -> None:
+diff --git a/acmf/calibration/optimizer.py b/acmf/calibration/optimizer.py
+index 0ce990b..a7905ad 100644
+--- a/acmf/calibration/optimizer.py
++++ b/acmf/calibration/optimizer.py
+@@ -2,7 +2,7 @@ from dataclasses import dataclass
+ from typing import Callable
+ import numpy as np
+ from scipy.optimize import differential_evolution
+-from acmf.calibration.dataset import EmpiricalDataset
++from acmf.calibration.dataset import CalibrationDataset
+ from acmf.calibration.loss import CalibrationLoss
+ from acmf.model.parameters import ModelParameters
+ 
+@@ -41,7 +41,7 @@ class EmpiricalOptimizer:
+ 
+     def __init__(
+         self,
+-        dataset: EmpiricalDataset,
++        dataset: CalibrationDataset,
+         base_params: ModelParameters,
+         bounds: ParameterBounds | None = None,
+     ) -> None:
+diff --git a/acmf/export/json_exporter.py b/acmf/export/json_exporter.py
+index 9daec6e..5147e08 100644
+--- a/acmf/export/json_exporter.py
++++ b/acmf/export/json_exporter.py
+@@ -35,6 +35,10 @@ class SimulationJSONExporter:
+         out_file.parent.mkdir(parents=True, exist_ok=True)
+ 
+         payload = {
++            # Every payload from this exporter comes from ACMFEngine.simulate,
++            # never from an external/observational source — mark it explicitly
++            # so CalibrationDataset.from_file cannot mistake it for real data.
++            "is_synthetic": True,
+             "metadata": metadata or {},
+             "times": trajectory.times,
+             "states": {
+diff --git a/acmf/validation/test_14_convergence.py b/acmf/validation/test_14_convergence.py
+index dcee08a..502adc8 100644
+--- a/acmf/validation/test_14_convergence.py
++++ b/acmf/validation/test_14_convergence.py
+@@ -8,6 +8,17 @@ from acmf.solver.base import SolverDomain
+ from acmf.solver.engine import ACMFEngine
+ from acmf.validation.result import TestResult
+ 
++# Относительный, а не абсолютный порог для стандартной ошибки среднего.
++# Абсолютное значение 0.1 не имело обоснования и не масштабировалось
++# с характерным диапазоном самой переменной Inst — при другом наборе
++# параметров (другой mean_inst) тот же порог мог быть как избыточно
++# строгим, так и пропускать реально нестабильную MC-оценку.
++RELATIVE_SE_TOLERANCE = 0.05
++
++# Нижний предел масштаба в знаменателе — защита от деления на
++# величину, близкую к нулю, если mean_inst окажется около 0.
++MIN_SCALE_FLOOR = 0.05
++
+ 
+ def run_test_14(params: ModelParameters) -> TestResult:
+     """TEST 14 — Монте-Карло сходимость статистических моментов траектории."""
+@@ -15,14 +26,19 @@ def run_test_14(params: ModelParameters) -> TestResult:
+     engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+     forcing = ForcingProfile().evaluate(0.0)
+ 
+-    init_state = np.zeros(13, dtype=np.float64)
++    # Размерность состояния выводится из контракта модели (9 базовых
++    # компонент + N_sub подсистем SID + 1), а не захардкожена как 13 —
++    # ранее это расходилось со стилем test_05/test_21 и было хрупко
++    # при изменении N_sub.
++    state_dim = 9 + params.N_sub + 1
++    init_state = np.zeros(state_dim, dtype=np.float64)
+     init_state[3:7] = 0.8
+     init_state[7] = 0.8 * params.F_max
+ 
+     def drift_fn(x, d_a, d_p, d_i, d_agg):
+         st = StateVector(x)
+         return compute_full_drift_vector(
+-            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params
++            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(params.N_sub), params
+         )
+ 
+     def diff_fn(x):
+@@ -43,8 +59,12 @@ def run_test_14(params: ModelParameters) -> TestResult:
+         )
+         final_inst_values.append(traj.states[-1, 3])
+ 
++    mean_inst = float(np.mean(final_inst_values))
+     std_err = float(np.std(final_inst_values) / np.sqrt(n_runs))
+-    is_converged = std_err < 0.1
++
++    scale = max(abs(mean_inst), MIN_SCALE_FLOOR)
++    relative_error = std_err / scale
++    is_converged = relative_error < RELATIVE_SE_TOLERANCE
+ 
+     status = "PASSED" if is_converged else "FAILED"
+ 
+@@ -52,5 +72,11 @@ def run_test_14(params: ModelParameters) -> TestResult:
+         test_id="TEST_14",
+         name="Monte Carlo Moment Convergence",
+         status=status,
+-        details={"mean_inst": float(np.mean(final_inst_values)), "std_error": std_err},
+-    )
+\ No newline at end of file
++        details={
++            "n_runs": n_runs,
++            "mean_inst": mean_inst,
++            "std_error": std_err,
++            "relative_error": relative_error,
++            "relative_se_tolerance": RELATIVE_SE_TOLERANCE,
++        },
++    )
+diff --git a/acmf/validation/test_21_solver_independence.py b/acmf/validation/test_21_solver_independence.py
+index d686910..794e4c3 100644
+--- a/acmf/validation/test_21_solver_independence.py
++++ b/acmf/validation/test_21_solver_independence.py
+@@ -8,9 +8,39 @@ from acmf.solver.base import SolverDomain
+ from acmf.solver.engine import ACMFEngine
+ from acmf.validation.result import TestResult
+ 
++# Минимальный допустимый порядок эмпирической сходимости (log-log
++# наклон между дискретизациями). EM имеет теоретический strong order
++# 0.5, Milstein — 1.0; сравниваем траектории двух схем друг с другом
++# (а не с общим точным решением), поэтому наблюдаемый порядок этой
++# разности — величина, ограниченная снизу более слабой схемой (EM),
++# но с меньшим запасом из-за шумовой природы SDE. Порог занижен
++# намеренно, чтобы не давать ложных FAIL из-за стохастического шума.
++MIN_ACCEPTABLE_CONVERGENCE_ORDER = 0.15
++
++# Минимальный множитель падения ошибки между самым грубым и самым
++# мелким шагом — защита от случая, когда log-log наклон формально
++# положителен, но эффект пренебрежимо мал (шум/округление).
++MIN_ERROR_REDUCTION_FACTOR = 1.5
++
+ 
+ def run_test_21(params: ModelParameters) -> TestResult:
+-    """TEST 21 — Сходимость и независимость Euler-Maruyama/Milstein."""
++    """
++    TEST 21 — Сходимость и независимость Euler-Maruyama/Milstein.
++
++    ВАЖНОЕ ОГРАНИЧЕНИЕ ДОСТОВЕРНОСТИ (документируется явно, а не
++    скрывается): ACMFEngine.simulate принимает только random_seed, а
++    не общий поток приращений Винеровского процесса (dW). Поэтому
++    траектории при разных dt для одного и того же random_seed не
++    гарантированно используют согласованные (matched) реализации
++    броуновского пути — генератор с тем же seed при разном числе
++    шагов расходует случайные числа по-другому. Из-за этого нельзя
++    утверждать строгий Richardson-style порядок сходимости в
++    классическом смысле. Тест ниже — эмпирическая проверка на монотонный
++    и количественно значимый тренд убывания расхождения EM/Milstein
++    при измельчении шага, а не доказательство теоретического порядка.
++    Для полной строгости здесь нужен API солвера с инжектируемым
++    общим dW-потоком (см. ACMF4 audit item про engine.py).
++    """
+     domain = SolverDomain(
+         sid_buf=params.SID_buf,
+         sid_max=params.SID_max,
+@@ -94,10 +124,34 @@ def run_test_21(params: ModelParameters) -> TestResult:
+             )
+         )
+ 
+-    converges = (
+-        discrepancies[-1]
+-        <= discrepancies[0]
++    # 1. Строгая монотонность по ВСЕМ последовательным парам, а не
++    # только по конечным точкам (было: discrepancies[-1] <= discrepancies[0]).
++    is_monotonic = all(
++        discrepancies[i + 1] <= discrepancies[i]
++        for i in range(len(discrepancies) - 1)
++    )
++
++    # 2. Эмпирический порядок сходимости через log-log наклон
++    # (линейная регрессия по всем трём точкам, не по двум крайним).
++    log_dt = np.log(np.array(dt_values, dtype=np.float64))
++    log_err = np.log(
++        np.maximum(np.array(discrepancies, dtype=np.float64), 1e-300)
+     )
++    slope, _intercept = np.polyfit(log_dt, log_err, 1)
++    observed_order = float(slope)
++
++    # 3. Абсолютное падение ошибки от самого грубого к самому мелкому
++    # шагу должно быть содержательным, а не в пределах шума.
++    error_reduction_factor = (
++        discrepancies[0] / discrepancies[-1]
++        if discrepancies[-1] > 0.0
++        else float("inf")
++    )
++
++    order_ok = observed_order >= MIN_ACCEPTABLE_CONVERGENCE_ORDER
++    reduction_ok = error_reduction_factor >= MIN_ERROR_REDUCTION_FACTOR
++
++    converges = is_monotonic and order_ok and reduction_ok
+ 
+     return TestResult(
+         test_id="TEST_21",
+@@ -106,6 +160,16 @@ def run_test_21(params: ModelParameters) -> TestResult:
+         details={
+             "dt_values": dt_values,
+             "max_discrepancies": discrepancies,
+-            "refinement_improves_agreement": converges,
++            "is_monotonic_all_pairs": is_monotonic,
++            "observed_convergence_order": observed_order,
++            "min_acceptable_order": MIN_ACCEPTABLE_CONVERGENCE_ORDER,
++            "error_reduction_factor": error_reduction_factor,
++            "min_required_reduction_factor": MIN_ERROR_REDUCTION_FACTOR,
++            "caveat": (
++                "EM/Milstein trajectories at different dt are not "
++                "guaranteed to share matched Brownian increments for the "
++                "same random_seed; this is an empirical trend check, not "
++                "a strict Richardson convergence-order proof."
++            ),
+         },
+     )
+diff --git a/run_calibration.py b/run_calibration.py
+index ac543a8..98c5b5d 100644
+--- a/run_calibration.py
++++ b/run_calibration.py
+@@ -14,7 +14,7 @@ from config.schema import (
+     ContagionAndHawkesConfig,
+ )
+ from acmf.model.parameters import ModelParameters
+-from acmf.calibration.dataset import EmpiricalDataset
++from acmf.calibration.dataset import CalibrationDataset
+ from acmf.calibration.optimizer import EmpiricalOptimizer, ParameterBounds
+ from acmf.export.json_exporter import NumpyJSONEncoder
+ 
+@@ -58,8 +58,11 @@ def main() -> None:
+         print(f"[!] Файл {data_source} не найден. Сначала запустите: python run_scenario.py")
+         return
+ 
+-    print(f"Загрузка эмпирического датасета из {data_source}...")
+-    dataset = EmpiricalDataset.from_synthetic_or_file(data_source)
++    print(f"Загрузка датасета калибровки из {data_source}...")
++    dataset = CalibrationDataset.from_file(data_source)
++    if dataset.is_synthetic:
++        print("    [!] Датасет помечен как СИНТЕТИЧЕСКИЙ — это калибровка на "
++              "модельных, а не эмпирических данных.")
+ 
+     optimizer = EmpiricalOptimizer(dataset=dataset, base_params=base_params)
+     print("Запуск глобальной оптимизации Differential Evolution...")

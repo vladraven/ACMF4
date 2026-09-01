@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Callable
 import numpy as np
 from scipy.optimize import differential_evolution
-from acmf.calibration.dataset import EmpiricalDataset
+from acmf.calibration.dataset import CalibrationDataset
 from acmf.calibration.loss import CalibrationLoss
 from acmf.model.parameters import ModelParameters
 
@@ -41,7 +41,7 @@ class EmpiricalOptimizer:
 
     def __init__(
         self,
-        dataset: EmpiricalDataset,
+        dataset: CalibrationDataset,
         base_params: ModelParameters,
         bounds: ParameterBounds | None = None,
     ) -> None:

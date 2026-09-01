@@ -22,6 +22,22 @@ class DelaySpectrumResult:
     is_stable: bool
 
 
+class DelaySpectrumSolverError(RuntimeError):
+    """
+    Поднимается, когда сеточный поиск не нашёл ни одного корня
+    трансцендентного характеристического уравнения в заданном окне.
+
+    Раньше на этот случай существовал fallback: eigvals(A0 + A1),
+    то есть собственные числа обычной (не запаздывающей) матрицы —
+    математически другой объект, корректный только в пределе Δ→0.
+    Он подписывался как DelaySpectrumResult без каких-либо пометок,
+    так что вызывающий код не мог отличить настоящий корень DDE от
+    этого приближения. Такая подмена недопустима для теста, который
+    заявляет доказательность на уровне анализа устойчивости —
+    поэтому теперь это явная ошибка, а не тихий fallback.
+    """
+
+
 class DelaySpectrumSolver:
     """
     Численный решатель трансцендентного характеристического уравнения:
@@ -42,6 +58,7 @@ class DelaySpectrumSolver:
         dim = a_0.shape[0]
         i_mat = np.eye(dim, dtype=np.complex128)
         d_lam = lam * i_mat - a_0 - a_1 * np.exp(-lam * delay)
+        # Ищем корни через минимальное сингулярное число (det(D) == 0 <=> min(svd) == 0)
         s = np.linalg.svd(d_lam, compute_uv=False)
         return float(s[-1])
 
@@ -51,7 +68,16 @@ class DelaySpectrumSolver:
         a_1: np.ndarray,
         delay: float,
     ) -> DelaySpectrumResult:
-        """Сканирует спектральное окно и находит уникальные корни характеристического оператора."""
+        """
+        Сканирует спектральное окно и находит уникальные корни
+        характеристического оператора.
+
+        Поднимает DelaySpectrumSolverError, если ни один корень не
+        найден в окне (lambda_min..lambda_max, -omega_max..omega_max)
+        с заданным tolerance — вместо того чтобы молча вернуть
+        собственные числа A0+A1. Расширение окна поиска или допуска —
+        осознанное решение вызывающего кода, а не решателя.
+        """
         cfg = self.config
         re_grid = np.linspace(cfg.lambda_min, cfg.lambda_max, cfg.grid_re_points)
         im_grid = np.linspace(-cfg.omega_max, cfg.omega_max, cfg.grid_im_points)
@@ -69,24 +95,22 @@ class DelaySpectrumSolver:
                 )
                 if res.fun < cfg.tolerance:
                     root = complex(round(res.x[0], 4), round(res.x[1], 4))
+                    # Проверка на дубликаты
                     if not any(abs(root - r) < 1e-3 for r in found_roots):
                         found_roots.append(root)
 
-        # Instantaneous spectrum — тождественное упрощение, не fallback.
-        # Применяется только при Delta_t == 0, когда DDE вырождается в ODE.
-        if not found_roots and delay == 0.0:
-            instantaneous = np.linalg.eigvals(a_0 + a_1)
-            found_roots = [complex(x) for x in instantaneous]
-
-        roots_arr = np.array(found_roots, dtype=np.complex128)
-        if len(roots_arr) == 0:
-            # Нет корней — возвращаем пустой результат. Вызывающий решает, что делать.
-            return DelaySpectrumResult(
-                roots=roots_arr,
-                critical_root=complex(-np.inf, 0.0),
-                is_stable=True,
+        if not found_roots:
+            raise DelaySpectrumSolverError(
+                "Не найдено ни одного корня характеристического уравнения "
+                f"DDE в окне Re∈[{cfg.lambda_min}, {cfg.lambda_max}], "
+                f"Im∈[-{cfg.omega_max}, {cfg.omega_max}] с tolerance="
+                f"{cfg.tolerance} (delay={delay}). Это не означает, что "
+                "корней не существует — возможно, окно/допуск/сетка "
+                "недостаточны для этой delay. Решение не подменяется "
+                "собственными числами A0+A1."
             )
 
+        roots_arr = np.array(found_roots, dtype=np.complex128)
         crit_idx = int(np.argmax(np.real(roots_arr)))
         crit_root = roots_arr[crit_idx]
         is_stable = bool(np.real(crit_root) < 0.0)

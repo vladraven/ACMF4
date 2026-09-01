@@ -2,7 +2,7 @@ import logging
 from collections import Counter
 from typing import Callable
 import numpy as np
-from acmf.calibration.dataset import EmpiricalDataset
+from acmf.calibration.dataset import CalibrationDataset
 from acmf.model.parameters import ModelParameters
 from acmf.model.forcing import ForcingProfile
 from acmf.model.dynamics import compute_full_drift_vector
@@ -18,7 +18,7 @@ class CalibrationLoss:
 
     def __init__(
         self,
-        dataset: EmpiricalDataset,
+        dataset: CalibrationDataset,
         base_params: ModelParameters,
         forcing_profile: ForcingProfile | None = None,
     ) -> None:
