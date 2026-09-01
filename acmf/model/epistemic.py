@@ -17,9 +17,6 @@ def compute_observed_wear(w_true: np.ndarray, visibility_gap: np.ndarray) -> np.
 def compute_burst_rate(ed_k: float, params: ModelParameters) -> float:
     """Вычисляет скорость взрывного раскрытия долга B_burst(ED^k)."""
     arg = -params.alpha_burst * (ed_k - params.ED_crit)
-    # Защита от переполнения экспоненты
-    if arg > 100.0:
-        return 0.0
     return float(params.lambda_burst / (1.0 + np.exp(arg)))
 
 
@@ -31,8 +28,8 @@ def compute_epistemic_debt_drift(
 ) -> np.ndarray:
     """Вычисляет dED^k/dt = (W_true^k - W_obs^k) - B_burst(ED^k) * ED^k."""
     ed = state.ed
-    d_ed = np.zeros(3, dtype=np.float64)
-    for k in range(3):
+    d_ed = np.zeros(params.N_sub, dtype=np.float64)
+    for k in range(params.N_sub):
         b_burst = compute_burst_rate(float(ed[k]), params)
         d_ed[k] = (w_true[k] - w_obs[k]) - b_burst * ed[k]
     return d_ed
@@ -43,7 +40,6 @@ def compute_aggregated_sids(state: StateVector, params: ModelParameters) -> tupl
     Вычисляет истинный и наблюдаемый агрегированный дефицит:
     AggSID_true = sum(SID^k) / N_sub
     AggSID_obs = AggSID_true - ED_impact * sum(ED_norm^k) / N_sub
-    где ED_norm^k = ED^k / (ED^k + ED_scale)
     """
     agg_true = float(np.sum(state.sid) / params.N_sub)
     ed_norm = state.ed / (state.ed + params.ED_scale)

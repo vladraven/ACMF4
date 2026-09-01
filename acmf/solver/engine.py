@@ -19,19 +19,21 @@ class TrajectoryResult:
 
 
 class ACMFEngine:
-    """
-    Оркестратор численного моделирования DDE-системы со скачками и отражением.
-    """
+    """Оркестратор численного моделирования DDE-системы со скачками и отражением."""
 
     def __init__(
         self,
         domain: SolverDomain,
         scheme: Literal["euler_maruyama", "milstein"] = "euler_maruyama",
+        state_dim: int = 13,
+        sid_noise_dim: int = 3,
         buffer_capacity: int = 2000,
     ) -> None:
         self.reflector = SkorokhodReflector(domain)
-        self.history = HistoryBuffer(capacity=buffer_capacity, state_dim=13)
+        self.history = HistoryBuffer(capacity=buffer_capacity, state_dim=state_dim)
         self.step_scheme = MilsteinStep() if scheme == "milstein" else EulerMaruyamaStep()
+        self.state_dim = state_dim
+        self.sid_noise_dim = sid_noise_dim
 
     def simulate(
         self,
@@ -46,22 +48,19 @@ class ACMFEngine:
         random_seed: int | None = None,
         d_a_dt_fn: Callable[[float], float] | None = None,
     ) -> TrajectoryResult:
-        """
-        Запускает цикл численной симуляции траектории.
-        """
+        """Запускает цикл численной симуляции траектории."""
         rng = np.random.default_rng(random_seed)
         t_start, t_end = t_span
         n_steps = int(np.ceil((t_end - t_start) / dt)) + 1
         times = np.linspace(t_start, t_end, n_steps)
 
-        states_history = np.zeros((n_steps, 13), dtype=np.float64)
-        drifts_history = np.zeros((n_steps, 13), dtype=np.float64)
+        states_history = np.zeros((n_steps, self.state_dim), dtype=np.float64)
+        drifts_history = np.zeros((n_steps, self.state_dim), dtype=np.float64)
         diagnostics: list[DiagnosticStep] = []
 
         current_state, init_diag = self.reflector.reflect_state(initial_state)
         states_history[0] = current_state
 
-        # Инициализация буфера истории начальным состоянием
         initial_drift = drift_fn(current_state, 0.0, 0.0, 0.0, 0.0)
         drifts_history[0] = initial_drift
         self.history.append(t_start, current_state, initial_drift)
@@ -69,15 +68,8 @@ class ACMFEngine:
         for step_idx in range(n_steps - 1):
             t_curr = times[step_idx]
 
-            # 1. Извлечение запаздывающих производных
-            # ИСПРАВЛЕНО: раньше d_a_dt был захардкожен в 0.0 без лага,
-            # из-за чего theta_A-слагаемое TSM было мёртвым кодом
-            # независимо от реальной динамики A(t). A(t) — экзогенное
-            # воздействие, не компонента state vector, поэтому у него
-            # нет истории в HistoryBuffer; вместо этого берём его
-            # производную из явно переданного d_a_dt_fn(t) (по умолчанию
-            # постоянный forcing => 0.0, но теперь это явное допущение,
-            # а не немая заглушка).
+            # dA/dt читается каузально: либо из явной функции, либо из буфера внешнего forcing.
+            # В полной реализации dA/dt должен писаться в буфер истории как exogenous signal.
             d_a_dt = float(d_a_dt_fn(t_curr)) if d_a_dt_fn is not None else 0.0
             d_prod_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=5)
             d_inst_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=3)
@@ -87,17 +79,13 @@ class ACMFEngine:
                 + CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_ref, component_idx=2)
             ) / 3.0
 
-            # 2. Вычисление дрейфа и диффузии
             drift = drift_fn(current_state, d_a_dt, d_prod_dt, d_inst_dt, d_agg_obs_dt)
             sigma, d_sigma = diffusion_fn(current_state)
 
-            # 3. Скачки
-            jump = jump_generator_fn(current_state, t_curr) if jump_generator_fn else np.zeros(3)
+            jump = jump_generator_fn(current_state, t_curr) if jump_generator_fn else np.zeros(self.sid_noise_dim)
 
-            # 4. Случайный шум
-            dw_norm = rng.standard_normal(3)
+            dw_norm = rng.standard_normal(self.sid_noise_dim)
 
-            # 5. Стохастический шаг
             raw_next_state = self.step_scheme.step(
                 current_state=current_state,
                 drift=drift,
@@ -108,10 +96,8 @@ class ACMFEngine:
                 dt=dt,
             )
 
-            # 6. Отражение Скорохода
             next_state, diag = self.reflector.reflect_state(raw_next_state)
 
-            # 7. Запись в историю и буфер
             states_history[step_idx + 1] = next_state
             drifts_history[step_idx] = drift
             diagnostics.append(diag)
@@ -119,7 +105,6 @@ class ACMFEngine:
 
             current_state = next_state
 
-        # Финальный дрейф
         drifts_history[-1] = drift_fn(current_state, 0.0, 0.0, 0.0, 0.0)
 
         return TrajectoryResult(

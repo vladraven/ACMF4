@@ -10,13 +10,9 @@ def clip_jump_to_domain(
     raw_jump: np.ndarray,
     params: ModelParameters,
 ) -> np.ndarray:
-    """
-    Зажимает скачок в пределы домена:
-    если J_hat > 0: min(J_hat, SID_max - SID)
-    если J_hat < 0: max(J_hat, -SID_buf - SID)
-    """
+    """Зажимает скачок в пределах домена."""
     clipped = np.zeros_like(raw_jump, dtype=np.float64)
-    for k in range(3):
+    for k in range(params.N_sub):
         j_val = raw_jump[k]
         sid_val = current_sid[k]
         if j_val > 0.0:
@@ -35,10 +31,7 @@ def compute_recovery_debt_cost(
     agg_sid_true: float,
     params: ModelParameters,
 ) -> float:
-    """
-    Вычисляет прирост мобилизационного долга K_rec:
-    K_rec = ||J_vec||_2 * [1 + omega_V * V + omega_SID * S+(AggSID_true; kappa_s)]
-    """
+    """Вычисляет прирост мобилизационного долга K_rec."""
     norm_j = float(np.linalg.norm(jump_vec, ord=2))
     if norm_j == 0.0:
         return 0.0

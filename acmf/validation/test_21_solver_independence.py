@@ -18,10 +18,8 @@ def run_test_21(params: ModelParameters) -> TestResult:
     )
     forcing = ForcingProfile().evaluate(0.0)
 
-    init_state = np.zeros(
-        9 + params.N_sub + 1,
-        dtype=np.float64,
-    )
+    state_dim = 2 * params.N_sub + 7
+    init_state = np.zeros(state_dim, dtype=np.float64)
     init_state[3:7] = 0.5
 
     def drift_fn(x, d_a, d_p, d_i, d_agg):
@@ -39,11 +37,7 @@ def run_test_21(params: ModelParameters) -> TestResult:
 
     def diff_fn(x):
         st = StateVector(x)
-        return compute_diffusion_sigma(
-            st,
-            forcing,
-            params,
-        )
+        return compute_diffusion_sigma(st, forcing, params)
 
     dt_values = (0.04, 0.02, 0.01)
     discrepancies = []
@@ -52,10 +46,14 @@ def run_test_21(params: ModelParameters) -> TestResult:
         engine_em = ACMFEngine(
             domain=domain,
             scheme="euler_maruyama",
+            state_dim=state_dim,
+            sid_noise_dim=params.N_sub,
         )
         engine_mil = ACMFEngine(
             domain=domain,
             scheme="milstein",
+            state_dim=state_dim,
+            sid_noise_dim=params.N_sub,
         )
 
         traj_em = engine_em.simulate(
@@ -84,28 +82,36 @@ def run_test_21(params: ModelParameters) -> TestResult:
             )
 
         discrepancies.append(
-            float(
-                np.max(
-                    np.abs(
-                        traj_em.states
-                        - traj_mil.states
-                    )
-                )
-            )
+            float(np.max(np.abs(traj_em.states - traj_mil.states)))
         )
 
-    converges = (
-        discrepancies[-1]
-        <= discrepancies[0]
+    # Попарное неувеличение расхождения
+    pairwise_non_increasing = all(
+        discrepancies[i + 1] <= discrepancies[i]
+        for i in range(len(discrepancies) - 1)
     )
+
+    # Наблюдаемый порядок сходимости: p ≈ log2(d_i / d_{i+1})
+    observed_orders = []
+    for i in range(len(discrepancies) - 1):
+        if discrepancies[i + 1] > 0.0 and discrepancies[i] > 0.0:
+            p = np.log2(discrepancies[i] / discrepancies[i + 1])
+            observed_orders.append(float(p))
+
+    min_order = min(observed_orders) if observed_orders else 0.0
+    order_ok = min_order >= 0.4
+
+    status = "PASSED" if (pairwise_non_increasing and order_ok) else "FAILED"
 
     return TestResult(
         test_id="TEST_21",
         name="Solver Independence Convergence",
-        status="PASSED" if converges else "FAILED",
+        status=status,
         details={
             "dt_values": dt_values,
             "max_discrepancies": discrepancies,
-            "refinement_improves_agreement": converges,
+            "pairwise_non_increasing": pairwise_non_increasing,
+            "observed_orders": observed_orders,
+            "min_observed_order": min_order,
         },
     )

@@ -12,17 +12,23 @@ from acmf.validation.result import TestResult
 def run_test_14(params: ModelParameters) -> TestResult:
     """TEST 14 — Монте-Карло сходимость статистических моментов траектории."""
     domain = SolverDomain(sid_buf=params.SID_buf, sid_max=params.SID_max, f_max=params.F_max)
-    engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+    state_dim = 2 * params.N_sub + 7
+    engine = ACMFEngine(
+        domain=domain,
+        scheme="euler_maruyama",
+        state_dim=state_dim,
+        sid_noise_dim=params.N_sub,
+    )
     forcing = ForcingProfile().evaluate(0.0)
 
-    init_state = np.zeros(13, dtype=np.float64)
+    init_state = np.zeros(state_dim, dtype=np.float64)
     init_state[3:7] = 0.8
     init_state[7] = 0.8 * params.F_max
 
     def drift_fn(x, d_a, d_p, d_i, d_agg):
         st = StateVector(x)
         return compute_full_drift_vector(
-            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params
+            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(params.N_sub), params
         )
 
     def diff_fn(x):
@@ -41,10 +47,27 @@ def run_test_14(params: ModelParameters) -> TestResult:
             diffusion_fn=diff_fn,
             random_seed=seed,
         )
-        final_inst_values.append(traj.states[-1, 3])
+        final_inst_values.append(traj.states[-1, params.N_sub])
 
-    std_err = float(np.std(final_inst_values) / np.sqrt(n_runs))
-    is_converged = std_err < 0.1
+    mean_val = float(np.mean(final_inst_values))
+    std_err = float(np.std(final_inst_values, ddof=1) / np.sqrt(n_runs))
+
+    # 95% CI полуширина vs домен Inst [0, 1]
+    ci_halfwidth = 1.96 * std_err
+    domain_range = 1.0  # Inst ∈ [0, 1]
+    ci_relative = ci_halfwidth / domain_range
+
+    # Согласие половин выборки
+    half = n_runs // 2
+    mean_first = float(np.mean(final_inst_values[:half]))
+    mean_second = float(np.mean(final_inst_values[half:]))
+    pooled_se = np.sqrt(
+        (np.std(final_inst_values[:half], ddof=1) ** 2 / half)
+        + (np.std(final_inst_values[half:], ddof=1) ** 2 / half)
+    )
+    half_agreement = abs(mean_first - mean_second) < 1.96 * pooled_se
+
+    is_converged = (ci_relative < 0.05) and half_agreement
 
     status = "PASSED" if is_converged else "FAILED"
 
@@ -52,5 +75,13 @@ def run_test_14(params: ModelParameters) -> TestResult:
         test_id="TEST_14",
         name="Monte Carlo Moment Convergence",
         status=status,
-        details={"mean_inst": float(np.mean(final_inst_values)), "std_error": std_err},
+        details={
+            "mean_inst": mean_val,
+            "std_error": std_err,
+            "ci_halfwidth": ci_halfwidth,
+            "ci_relative_to_domain": ci_relative,
+            "mean_first_half": mean_first,
+            "mean_second_half": mean_second,
+            "half_agreement": half_agreement,
+        },
     )

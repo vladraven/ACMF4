@@ -38,11 +38,7 @@ def compute_reform_impulse(
     forcing: ForcingState,
     params: ModelParameters,
 ) -> float:
-    """
-    Вычисляет реформаторский импульс:
-    Awareness = S+(AggSID_obs - RefThresh; kappa_s)
-    ReformImpulse = lambda_ref_0 * (1 - omega_fatigue * Scar) * Awareness * G * exp(-tau_ref * S+(dAggSID_obs/dt; kappa_s))
-    """
+    """Вычисляет реформаторский импульс."""
     awareness = float(s_plus(agg_sid_obs - params.RefThresh, params.kappa_s))
     fatigue = max(0.0, 1.0 - params.omega_fatigue * scar)
     d_agg_smoothed = float(s_plus(delayed_d_agg_sid_obs_dt, params.kappa_s))
@@ -59,15 +55,11 @@ def compute_sid_drift(
     spillover: np.ndarray,
     params: ModelParameters,
 ) -> np.ndarray:
-    """
-    Вычисляет дрейф компонент SID:
-    Drift^k = S+(Delta^k) * (SID_max - SID^k)/SID_max + S-(Delta^k) * (SID_buf + SID^k)/SID_buf
-              - rho_k * R_eff * Inst * S+(SID^k) + Spillover^k
-    """
+    """Вычисляет дрейф компонент SID."""
     delta = w_true - ecy
-    drift = np.zeros(3, dtype=np.float64)
+    drift = np.zeros(params.N_sub, dtype=np.float64)
 
-    for k in range(3):
+    for k in range(params.N_sub):
         sid_k = state.sid[k]
         term_pos = float(s_plus(delta[k], params.kappa_s)) * (params.SID_max - sid_k) / params.SID_max
         term_neg = float(s_minus(delta[k], params.kappa_s)) * (params.SID_buf + sid_k) / params.SID_buf
@@ -87,33 +79,27 @@ def compute_bounded_ode_drifts(
     params: ModelParameters,
 ) -> tuple[float, float, float, float, float, float]:
     """Вычисляет d/dt для [Inst, Ch, Prod, M, F, Scar]."""
-    # 1. dInst/dt
     inst_growth = params.alpha_pos * (r_eff * state.ch + params.gamma_inst * state.m * forcing.G) + reform_impulse
     inst_decay = params.mu_inst + params.beta_neg * float(s_plus(agg_sid_true, params.kappa_s))
     d_inst = inst_growth * (1.0 - state.inst) - inst_decay * state.inst
 
-    # 2. dF/dt
     d_f = (
         params.alpha_F * state.m * forcing.G * (params.F_max - state.f)
         - params.beta_F * float(s_plus(state.sid[2], params.kappa_s)) * state.f
     )
 
-    # 3. dCh/dt
     d_ch = (
         params.alpha_Ch * state.inst * state.prod * (1.0 - state.ch)
         - (params.mu_Ch + params.beta_Ch * tsm) * state.ch
     )
 
-    # 4. dProd/dt
     d_prod = (
         params.alpha_Prod * forcing.A * state.ch * (1.0 - state.prod)
         - params.beta_Prod * float(s_plus(state.sid[1], params.kappa_s)) * state.prod
     )
 
-    # 5. dM/dt
     d_m = params.alpha_M * state.prod * state.inst * (1.0 - state.m) - params.mu_M * state.m
 
-    # 6. dScar/dt
     scar_growth = params.gamma_scar * float(s_plus(agg_sid_true - params.Threshold_scar, params.kappa_s))
     d_scar = scar_growth * (1.0 - state.scar) - params.mu_scar * state.scar
 
@@ -131,8 +117,8 @@ def compute_full_drift_vector(
     params: ModelParameters,
 ) -> np.ndarray:
     """
-    Вычисляет полный 13-мерный детерминированный вектор дрейфа F(X).
-    Возвращает плоский ndarray формы (13,).
+    Вычисляет полный детерминированный вектор дрейфа F(X).
+    Размерность: 2*N_sub + 7.
     """
     r_eff = compute_r_eff(forcing.R_0, state.scar, params.gamma_R)
     tsm = compute_tsm(delayed_d_a_dt, delayed_d_prod_dt, delayed_d_inst_dt, params)
@@ -145,29 +131,26 @@ def compute_full_drift_vector(
 
     reform_impulse = compute_reform_impulse(agg_obs, delayed_d_agg_sid_obs_dt, state.scar, forcing, params)
 
-    # SID дрейфы
     sid_drift = compute_sid_drift(state, w_true, ecy, r_eff, spillover, params)
 
-    # ОДУ дрейфы
     d_inst, d_ch, d_prod, d_m, d_f, d_scar = compute_bounded_ode_drifts(
         state, forcing, r_eff, reform_impulse, agg_true, tsm, params
     )
 
-    # ED дрейфы
     d_ed = compute_epistemic_debt_drift(state, w_true, w_obs, params)
 
-    # RecDebt дрейф
     d_rec_debt = compute_recovery_debt_drift(state, params)
 
-    full_drift = np.zeros(13, dtype=np.float64)
-    full_drift[0:3] = sid_drift
-    full_drift[3] = d_inst
-    full_drift[4] = d_ch
-    full_drift[5] = d_prod
-    full_drift[6] = d_m
-    full_drift[7] = d_f
-    full_drift[8] = d_scar
-    full_drift[9:12] = d_ed
-    full_drift[12] = d_rec_debt
+    state_dim = 2 * params.N_sub + 7
+    full_drift = np.zeros(state_dim, dtype=np.float64)
+    full_drift[0:params.N_sub] = sid_drift
+    full_drift[params.N_sub] = d_inst
+    full_drift[params.N_sub + 1] = d_ch
+    full_drift[params.N_sub + 2] = d_prod
+    full_drift[params.N_sub + 3] = d_m
+    full_drift[params.N_sub + 4] = d_f
+    full_drift[params.N_sub + 5] = d_scar
+    full_drift[params.N_sub + 6 : 2 * params.N_sub + 6] = d_ed
+    full_drift[2 * params.N_sub + 6] = d_rec_debt
 
     return full_drift
