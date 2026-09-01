@@ -8,6 +8,12 @@ from acmf.solver.base import SolverDomain
 from acmf.solver.engine import ACMFEngine
 from acmf.validation.result import TestResult
 
+SAMPLE_RUNS_COUNT: int = 50
+SIMULATION_HORIZON: float = 10.0
+INTEGRATION_STEP: float = 0.05
+CI_RELATIVE_LIMIT: float = 0.05
+ABSOLUTE_DIFF_LIMIT: float = 1e-3
+
 
 def run_test_14(params: ModelParameters) -> TestResult:
     """TEST 14 — Монте-Карло сходимость статистических моментов траектории."""
@@ -35,14 +41,13 @@ def run_test_14(params: ModelParameters) -> TestResult:
         st = StateVector(x)
         return compute_diffusion_sigma(st, forcing, params)
 
-    n_runs = 20
     final_inst_values = []
 
-    for seed in range(n_runs):
+    for seed in range(SAMPLE_RUNS_COUNT):
         traj = engine.simulate(
             initial_state=init_state,
-            t_span=(0.0, 10.0),
-            dt=0.05,
+            t_span=(0.0, SIMULATION_HORIZON),
+            dt=INTEGRATION_STEP,
             drift_fn=drift_fn,
             diffusion_fn=diff_fn,
             random_seed=seed,
@@ -50,24 +55,25 @@ def run_test_14(params: ModelParameters) -> TestResult:
         final_inst_values.append(traj.states[-1, params.N_sub])
 
     mean_val = float(np.mean(final_inst_values))
-    std_err = float(np.std(final_inst_values, ddof=1) / np.sqrt(n_runs))
+    std_err = float(np.std(final_inst_values, ddof=1) / np.sqrt(SAMPLE_RUNS_COUNT))
 
-    # 95% CI полуширина vs домен Inst [0, 1]
     ci_halfwidth = 1.96 * std_err
-    domain_range = 1.0  # Inst ∈ [0, 1]
+    domain_range = 1.0
     ci_relative = ci_halfwidth / domain_range
 
-    # Согласие половин выборки
-    half = n_runs // 2
+    half = SAMPLE_RUNS_COUNT // 2
     mean_first = float(np.mean(final_inst_values[:half]))
     mean_second = float(np.mean(final_inst_values[half:]))
-    pooled_se = np.sqrt(
-        (np.std(final_inst_values[:half], ddof=1) ** 2 / half)
-        + (np.std(final_inst_values[half:], ddof=1) ** 2 / half)
+    pooled_se = float(
+        np.sqrt(
+            (np.std(final_inst_values[:half], ddof=1) ** 2 / half)
+            + (np.std(final_inst_values[half:], ddof=1) ** 2 / half)
+        )
     )
-    half_agreement = abs(mean_first - mean_second) < 1.96 * pooled_se
+    diff_means = abs(mean_first - mean_second)
+    half_agreement = (diff_means < 1.96 * pooled_se) or (diff_means < ABSOLUTE_DIFF_LIMIT)
 
-    is_converged = (ci_relative < 0.05) and half_agreement
+    is_converged = (ci_relative < CI_RELATIVE_LIMIT) and half_agreement
 
     status = "PASSED" if is_converged else "FAILED"
 

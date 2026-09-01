@@ -1,0 +1,48 @@
+$ py run_validation.py
+=== ACMF 4.9.3.1 Full Comprehensive Validation Suite (TEST 00 - 21) ===
+[✓] PASS | TEST_00: Deterministic Baseline Convergence
+      Metrics: {'final_drift_norm': 4.376433451114008e-07, 'in_domain': True}
+[✓] PASS | TEST_01: Skorokhod Domain Invariance
+      Metrics: {'reflections_count': 11, 'domain_preserved': True, 'ode_clamp_count': 0, 'max_ode_overshoot': 0.0}
+[✓] PASS | TEST_02: Equilibria and Multistability Scan
+      Metrics: {'num_equilibria_found': 2, 'residuals': [1.621542470594782e-09, 1.2502291120988026e-10]}
+[✓] PASS | TEST_03: Instantaneous Jacobian Stability
+      Metrics: {'critical_eigenvalue': '(-0.020000009202351066+0j)', 'is_stable': True, 'biorthogonal_norm_err': 0.0}
+[•] N/D  | TEST_04: Saddle-Node Bifurcation Detection
+      Metrics: {'bifurcations_detected': 0, 'sn_count': 0, 'scan_parameter_min': 0.05, 'scan_parameter_max': 1.5}
+[•] N/D  | TEST_05: Hopf DDE Bifurcation Scan
+      Metrics: {'equilibria_scanned': 2, 'branches_with_nontrivial_delay': 2, 'max_delay_jacobian_norm': 0.3254929541069079, 'hopf_count': 0, 'delay_min': 0.5, 'delay_max': 5.0}
+[✓] PASS | TEST_06: System Recovery and Resilience
+      Metrics: {'initial_gap': 0.09999999999999998, 'final_gap': 8.8024143529708e-11}
+[✓] PASS | TEST_07: Shock Threshold Separatrix Distance
+      Metrics: {'shock_threshold_distance': 1.777649074792862}
+[✓] PASS | TEST_08: Hawkes Subcriticality and Event Clustering
+      Metrics: {'spectral_radius': 0.15, 'total_events_generated': 20}
+[✓] PASS | TEST_09: Spatial Network Contagion and Spillover
+      Metrics: {'spillover_node1': [0.10003357675275136, 0.10003357675275136, 0.10003357675275136], 'spillover_node3': [6.715348489118069e-05, 6.715348489118069e-05, 6.715348489118069e-05], 'spillover_ratio': 1489.6259728772895}
+[✓] PASS | TEST_10: Hybrid Cascade Regime Classification
+      Metrics: {'expected_cases': 7, 'passed_cases': 7, 'classification_results': {'Healthy': 'Healthy', 'Anarchy': 'Anarchy', 'Default': 'Default', 'Depopulation': 'Depopulation', 'Hybrid': 'Hybrid', 'Intermediate': 'Intermediate'}, 'hybrid_permutation_result': 'Hybrid'}
+[✓] PASS | TEST_11: EWS Modal Projection Lead Signals
+      Metrics: {'mean_variance': 8.598795412693695e-23, 'mean_ar1': 0.0}
+[✓] PASS | TEST_12: EWS False Positive Rate
+      Metrics: {'fpr': 0.013, 'target_max': 0.05}
+[✓] PASS | TEST_13: EWS False Negative Rate
+      Metrics: {'fnr': 0.0, 'target_max': 0.1}
+[✓] PASS | TEST_14: Monte Carlo Moment Convergence
+      Metrics: {'mean_inst': 0.9166529551259127, 'std_error': 1.243636448603928e-07, 'ci_halfwidth': 2.4375274392636986e-07, 'ci_relative_to_domain': 2.4375274392636986e-07, 'mean_first_half': 0.9166526575296039, 'mean_second_half': 0.9166532527222216, 'half_agreement': True}
+[✓] PASS | TEST_15: Sobol Global Sensitivity Analysis
+      Metrics: {'first_order_sobol_alpha': 0.15236694276870102, 'total_variance': 0.040755736863377086, 'n_samples': 100}
+[✓] PASS | TEST_16: Order Generation and ECY Feasibility
+      Metrics: {'max_ecy_to_capacity_ratio': 0.7078606905319816, 'n_samples': 500}
+[✓] PASS | TEST_17: Time-Scale Mismatch Monotonicity
+      Metrics: {'tsm_min': 0.0, 'tsm_max': 0.950212931632136}
+[✓] PASS | TEST_18: Scar Path Dependence and Hysteresis
+      Metrics: {'final_state_distance': 2.1208781392284988, 'final_scar_difference': 0.06972953380226576, 'scar_initial_base': 0.0, 'scar_initial_history': 0.7}
+[✓] PASS | TEST_19: Stochastic Recovery Time Distribution
+      Metrics: {'n_trials': 10, 'recovered_trials': 10, 'mean_recovery_time': 1.01, 'recovery_times': [1.2000000000000002, 1.05, 1.1500000000000001, 1.05, 0.9500000000000001, 0.8, 1.2000000000000002, 0.8, 0.9, 1.0]}
+[✓] PASS | TEST_20: Counterfactual Causal Policy Evaluation
+      Metrics: {'final_inst_baseline': 0.29267803806988685, 'final_inst_null_policy': 0.29267803806988685, 'final_inst_mild_policy': 0.584508373742618, 'final_inst_strong_policy': 0.865382197591551, 'final_sid_baseline': 1.7896899602930556, 'final_sid_null_policy': 1.7896899602930556, 'final_sid_mild_policy': 0.2572630190773754, 'final_sid_strong_policy': -0.5837158961129466, 'null_policy_max_difference': 0.0, 'null_policy_equivalent': True, 'mild_institutional_effect': 0.29183033567273114, 'strong_institutional_effect': 0.5727041595216642, 'nontrivial_policy_effect': True, 'dose_response': True, 'sid_nonworsening': True}
+[✓] PASS | TEST_21: Solver Independence Convergence
+      Metrics: {'dt_values': (0.04, 0.02, 0.01), 'max_discrepancies': [0.00286919390975587, 0.0016005593028210752, 0.0010331256942766043], 'pairwise_non_increasing': True, 'observed_orders': [0.8420693419583213, 0.6315603425854207], 'min_observed_order': 0.6315603425854207}
+
+Final Validation Level: STOCHASTICALLY_VALIDATED

@@ -3,14 +3,17 @@ from acmf.model.parameters import ModelParameters
 from acmf.model.state import StateVector
 from acmf.model.forcing import ForcingProfile
 from acmf.model.dynamics import compute_full_drift_vector
-from acmf.analysis.equilibria import EquilibriumEngine
+from acmf.analysis.equilibria import EquilibriumEngine, EquilibriumConfig
 from acmf.validation.result import TestResult
+
+DEFAULT_RESIDUAL_TOL: float = 1e-5
 
 
 def run_test_02(params: ModelParameters) -> TestResult:
     """TEST 02 — Поиск и устойчивость стационарных состояний F(X*) = 0."""
     forcing = ForcingProfile().evaluate(0.0)
-    engine = EquilibriumEngine(epsilon_eq=1e-5)
+    config = EquilibriumConfig(residual_tol=DEFAULT_RESIDUAL_TOL)
+    engine = EquilibriumEngine(config=config)
 
     def drift_deterministic(x: np.ndarray) -> np.ndarray:
         st = StateVector(x)
@@ -18,7 +21,6 @@ def run_test_02(params: ModelParameters) -> TestResult:
             st, forcing, 0.0, 0.0, 0.0, 0.0, np.zeros(3), params
         )
 
-    # Начальные приближения: здоровый режим и деградированный режим
     guess_healthy = np.zeros(13, dtype=np.float64)
     guess_healthy[3:7] = 0.8
     guess_healthy[7] = 0.8 * params.F_max
