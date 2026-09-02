@@ -427,15 +427,15 @@ Equilibrium Engine запускается из множества initial condit
  Проверяется: max Re(lambda\_inst) \< 0 и max Re(lambda\_delay) \< 0\.  
  Pass: healthy equilibrium устойчив одновременно в instantaneous и delay анализе.
 
-#### TEST 04 — Saddle-Node
+#### TEST 04 — Saddle-Node (Global Search, обновлено)
 
-Control parameter mu сканируется автоматически. Проверяются: две ветви; сближение; исчезновение решений; lambda\_crit→0; Im(lambda\_crit)→0; d Re(lambda\_crit)/d mu ≠ 0\.  
- Pass: подтверждена аннигиляция пары equilibrium и transversality. Если ветви не обнаружены — NOT DETECTED, не FAIL.
+Вместо скана одного параметра по равномерной сетке — differential-evolution глобальный поиск по 4D-боксу (R\_0, mu\_inst, alpha\_pos, gamma\_R), минимизирующий min |Re(lambda)| по всем найденным (multistart) equilibrium в каждой точке. При обнаружении почти вырожденного Якобиана (margin \< 5e-3) выполняется central-difference transversality-check вдоль R\_0 и классификация Saddle-Node/Hopf по мнимой части. Каждый кандидат-equilibrium явно фильтруется через `StateVector.is_in_domain` — устраняет обнаруженный баг, при котором `scipy.optimize.root` возвращал математически корректные, но физически недопустимые корни (например, ED^k \< 0), дающие ложное почти-нулевое собственное значение.  
+ Pass/Result: 2660 вычислений функции, global\_search\_min\_margin ≈ 0.0058 — NOT DETECTED. Это существенно более сильное свидетельство отсутствия SN в исследованном боксе параметров, чем прежняя 1D-сетка из 30 точек, но не исчерпывающее доказательство для параметров вне бокса.
 
-#### TEST 05 — Hopf
+#### TEST 05 — Hopf (Root Continuation, обновлено)
 
-Сканируется, например, tau\_ref. Ищется Re(lambda\_crit)=0 при Im(lambda\_crit)≠0. Проверяются: комплексно-сопряжённая пара; пересечение мнимой оси; transversality; появление periodic orbit (проверяется независимо от спектрального теста).  
- Pass: спектральное пересечение и периодическая орбита подтверждены.
+Вместо единого дорогого 315-точечного Nelder-Mead скана (40 точек delay × ветвь) — root continuation: полный delay-spectrum solver вызывается один раз на пару (equilibrium branch × lambda\_ref\_scale) для получения надёжного стартового корня, затем этот корень отслеживается по мелкой сетке из 150 точек delay дешёвыми warm-started шагами Nelder-Mead, с периодической перекалибровкой полным солвером каждые 25 шагов (защита от дрейфа continuation). Добавлено второе измерение скана — lambda\_ref\_scale ∈ {0.5, 1.0, 1.5, 2.5, 4.0} (сила канала подавления задержанной производной в ReformImpulse), так как Hopf мог существовать только при другой силе этого канала, что старый тест не проверял. Та же фильтрация equilibrium по домену, что и в TEST 04.  
+ Pass/Result: ~19× больше точек сетки на ветвь (1500 против 315 суммарно) — NOT DETECTED. Честно фиксируется, что это не exhaustive proof вне отсканированного (delay, lambda\_ref\_scale)-бокса.
 
 #### TEST 06 — Recovery Basin
 
@@ -515,13 +515,23 @@ Baseline X\_baseline(t) vs intervention X\_intervention(t|u) через causal m
 #### TEST 21 — Solver Independence
 
 Одинаковые parameters/history/random increments/shocks/initial state передаются в Euler-Maruyama+Skorokhod и Milstein+Skorokhod. Сравниваются equilibrium, stability, attractor, basin, EWS classification, recovery time, boundary reflection.  
- Pass: классификация сохраняется между solver, количественные различия — в пределах numerical tolerance.
+ Pass: классификация сохраняется между solver, количественные различия — в пределах numerical tolerance. Caveat: траектории EM/Milstein при разных dt не гарантированно используют согласованные приращения Броуновского движения при одном random\_seed — это empirical trend check, не строгое Richardson convergence-order доказательство (см. TEST 23).
+
+#### TEST 22 — Boundary Inward-Pointing Drift Certificate (новый)
+
+Аналитически обоснованный, численно исчерпывающий (6400 случайных испытаний по возмущённому operational envelope параметров/состояний/forcing) сертификат: снос (drift) направлен внутрь домена на каждой границе для Inst, Ch, Prod, M, F, Scar, ED^k, RecDebt — восьми семейств переменных, которые НЕ получают diffusion/jump шум (шум и скачки действуют только на SID\[0:3\], см. euler\_maruyama.py/milstein.py). Ключевая лемма: `s_plus(x, kappa) = logaddexp(0, kappa·x)/kappa` строго \> 0 для любого вещественного x, поэтому каждый терм `beta·s_plus(...)` с `beta ≥ 0` (гарантировано схемой валидации параметров) неотрицателен. Граница RecDebt доказана точно алгебраически (`-mu_rec·0 = 0`).  
+ Pass: 0 нарушений из 6400 проверок. Это закрывает вопрос "может ли отражение реально сработать" для этих 8 переменных — для них Skorokhod-отражение является чисто численной страховкой, а не математической необходимостью. Поведение SID на границе намеренно не заявляется drift-inward (spillover/jumps могут выталкивать SID наружу по конструкции) и остаётся ответственностью Skorokhod-отражателя, валидированного в TEST 01.
+
+#### TEST 23 — Matched-Brownian-Path Strong Convergence (новый)
+
+Устраняет caveat TEST 21: используется ОДИН общий мелкий Broune-путь (dt\_fine \= 0.00125) на Monte Carlo траекторию, а грубые приращения dW получаются точным суммированием совпадающих мелких приращений — это истинный Richardson-style strong-convergence тест против общей реализации шума, а не сравнение независимых seed-ов.  
+ Pass: observed\_convergence\_order ≈ 0.887 (порог 0.3), error\_reduction\_factor ≈ 3.42 (порог 1.5), монотонное убывание ошибки при dt \= 0.02 → 0.01 → 0.005.
 
 ---
 
 ### Итоговый критерий ACMF 4.9.3.1
 
-Модель не считается доказанной только потому, что все 22 тестовых сценария запускаются. Итоговый статус — один из четырёх уровней:
+Модель не считается доказанной только потому, что все 24 тестовых сценария (TEST 00–23) запускаются. Итоговый статус — один из четырёх уровней:
 
 1. MATHEMATICALLY VALIDATED — инварианты, feasibility, solver convergence и спектральные вычисления подтверждены.  
 2. DYNAMICALLY VALIDATED — дополнительно подтверждены реальные equilibrium, bifurcation, basin и attractor properties.  
@@ -529,4 +539,6 @@ Baseline X\_baseline(t) vs intervention X\_intervention(t|u) через causal m
 4. EMPIRICALLY VALIDATED — параметры и наблюдаемые переменные успешно сопоставлены с независимыми историческими/эмпирическими данными.
 
 Ключевое ограничение: Saddle-Node, Hopf, hybrid attractors, hysteresis и predictive power не считаются существующими заранее. Их наличие должно быть результатом вычисления.
+
+Текущий фактический результат полного прогона `run_validation.py` (после добавления TEST 22/23 и обновления TEST 04/05): 22 PASS, 2 legitimate NOT DETECTED (TEST 04, TEST 05), 0 FAIL. Итоговый уровень: **STOCHASTICALLY VALIDATED**.
 
