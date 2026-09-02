@@ -36,6 +36,8 @@ from acmf.validation.test_18_hysteresis import run_test_18
 from acmf.validation.test_19_recovery_distribution import run_test_19
 from acmf.validation.test_20_counterfactual import run_test_20
 from acmf.validation.test_21_solver_independence import run_test_21
+from acmf.validation.test_22_boundary_drift_certificate import run_test_22
+from acmf.validation.test_23_matched_brownian_convergence import run_test_23
 
 
 def build_default_parameters() -> ModelParameters:
@@ -74,7 +76,7 @@ def build_default_parameters() -> ModelParameters:
 
 
 def main() -> None:
-    print("=== ACMF 4.9.3.1 Full Comprehensive Validation Suite (TEST 00 - 21) ===")
+    print("=== ACMF 4.9.3.1 Full Comprehensive Validation Suite (TEST 00 - 23) ===")
     params = build_default_parameters()
     framework = ValidationFramework()
 
@@ -83,6 +85,8 @@ def main() -> None:
     framework.register_test("TEST_01", lambda: run_test_01(params))
     framework.register_test("TEST_16", lambda: run_test_16(params))
     framework.register_test("TEST_21", lambda: run_test_21(params))
+    framework.register_test("TEST_22", lambda: run_test_22(params))
+    framework.register_test("TEST_23", lambda: run_test_23(params))
 
     # Уровень 2: Динамическая устойчивость и бифуркации
     framework.register_test("TEST_02", lambda: run_test_02(params))
