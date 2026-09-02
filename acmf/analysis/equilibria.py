@@ -6,22 +6,18 @@ from scipy.optimize import root
 
 @dataclass(frozen=True)
 class EquilibriumConfig:
-    """Конфигурация поиска равновесий."""
     residual_tol: float = 1e-6
     uniqueness_tol: float = 1e-3
 
 
 @dataclass(frozen=True)
 class EquilibriumPoint:
-    """Точка равновесия детерминированной системы."""
     state: np.ndarray
     residual_norm: float
     is_valid: bool
 
 
 class EquilibriumEngine:
-    """Поиск и валидация стационарных состояний F(X*) = 0."""
-
     def __init__(self, config: EquilibriumConfig | None = None) -> None:
         self.config = config or EquilibriumConfig()
 
@@ -30,25 +26,33 @@ class EquilibriumEngine:
         deterministic_drift_fn: Callable[[np.ndarray], np.ndarray],
         initial_guess: np.ndarray,
     ) -> EquilibriumPoint:
-        """Находит точку равновесия методом гибридного алгоритма Пауэлла (MINPACK)."""
         sol = root(deterministic_drift_fn, initial_guess, method="hybr")
         residual = float(np.linalg.norm(sol.fun))
         is_valid = bool(sol.success and residual < self.config.residual_tol)
-
-        return EquilibriumPoint(
-            state=sol.x,
-            residual_norm=residual,
-            is_valid=is_valid,
-        )
+        return EquilibriumPoint(state=sol.x, residual_norm=residual, is_valid=is_valid)
 
     def scan_multistability(
         self,
         deterministic_drift_fn: Callable[[np.ndarray], np.ndarray],
         initial_guesses: list[np.ndarray],
+        domain_sampler: Callable[[], np.ndarray] | None = None,
+        n_samples: int = 50,
     ) -> list[EquilibriumPoint]:
-        """Поиск нескольких стационарных ветвей из различных начальных приближений."""
+        """
+        Поиск нескольких стационарных ветвей.
+        Дополняет переданные guess'ы случайными сэмплами из домена.
+        """
+        all_guesses = list(initial_guesses)
+        
+        if domain_sampler is not None and len(all_guesses) < n_samples:
+            rng = np.random.default_rng(42)
+            dim = len(all_guesses[0]) if all_guesses else 13
+            for _ in range(n_samples - len(all_guesses)):
+                guess = domain_sampler()
+                all_guesses.append(guess)
+
         unique_eqs: list[EquilibriumPoint] = []
-        for guess in initial_guesses:
+        for guess in all_guesses:
             eq = self.find_equilibrium(deterministic_drift_fn, guess)
             if eq.is_valid:
                 if not any(

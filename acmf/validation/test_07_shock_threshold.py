@@ -11,30 +11,29 @@ from acmf.validation.result import TestResult
 
 
 def run_test_07(params: ModelParameters) -> TestResult:
-    """TEST 07 — Определение дистанции до сепаратрисы (Shock Threshold)."""
+    """TEST 07 — Определение дистанции до сепаратрисы."""
     domain = SolverDomain(sid_buf=params.SID_buf, sid_max=params.SID_max, f_max=params.F_max)
-    engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+    engine = ACMFEngine(domain=domain, scheme="euler_maruyama", state_dim=2 * params.N_sub + 7)
     forcing = ForcingProfile().evaluate(0.0)
     eq_engine = EquilibriumEngine()
 
     def drift_fn(x, d_a, d_p, d_i, d_agg):
         st = StateVector(x)
         return compute_full_drift_vector(
-            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params
+            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(params.N_sub), params
         )
 
     def diff_fn(x):
-        return np.zeros(3), np.zeros(3)
+        return np.zeros(params.N_sub), np.zeros(params.N_sub)
 
-    guess_healthy = np.zeros(13, dtype=np.float64)
-    guess_healthy[3:7] = 0.8
-    guess_healthy[7] = 0.8 * params.F_max
+    state_dim = 2 * params.N_sub + 7
+    guess_healthy = np.zeros(state_dim, dtype=np.float64)
+    guess_healthy[params.N_sub : params.N_sub + 4] = 0.8
+    guess_healthy[params.N_sub + 4] = 0.8 * params.F_max
     eq_healthy = eq_engine.find_equilibrium(lambda x: drift_fn(x, 0.0, 0.0, 0.0, 0.0), guess_healthy)
 
     def is_healthy(state_to_test: np.ndarray) -> bool:
-        # Проекция Скорохода перед запуском траектории
         projected_state, _ = engine.reflector.reflect_state(state_to_test)
-
         traj = engine.simulate(
             initial_state=projected_state,
             t_span=(0.0, 20.0),
@@ -42,13 +41,11 @@ def run_test_07(params: ModelParameters) -> TestResult:
             drift_fn=drift_fn,
             diffusion_fn=diff_fn,
         )
-        final_inst = traj.states[-1, 3]
-        final_sid = traj.states[-1, 0:3]
-
+        final_inst = traj.states[-1, params.N_sub]
+        final_sid = traj.states[-1, 0:params.N_sub]
         return bool(final_inst > 0.4 and np.all(final_sid < 1.8))
 
-    # Активные переменные возмущения: SID (0, 1, 2) и институты (3, 4, 5, 6)
-    active_indices = [0, 1, 2, 3, 4, 5, 6]
+    active_indices = list(range(params.N_sub + 4))
 
     solver = SeparatrixSolver()
     threshold = solver.compute_shock_threshold(

@@ -7,6 +7,7 @@ from acmf.solver.history import HistoryBuffer
 from acmf.solver.delay import CausalDelayLookup
 from acmf.solver.euler_maruyama import EulerMaruyamaStep
 from acmf.solver.milstein import MilsteinStep
+from acmf.model.forcing import ForcingProfile
 
 
 @dataclass
@@ -43,10 +44,10 @@ class ACMFEngine:
         drift_fn: Callable[[np.ndarray, float, float, float, float], np.ndarray],
         diffusion_fn: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
         jump_generator_fn: Callable[[np.ndarray, float], np.ndarray] | None = None,
+        forcing_profile: ForcingProfile | None = None,
         delay_t: float = 0.0,
         delay_ref: float = 0.0,
         random_seed: int | None = None,
-        d_a_dt_fn: Callable[[float], float] | None = None,
     ) -> TrajectoryResult:
         """Запускает цикл численной симуляции траектории."""
         rng = np.random.default_rng(random_seed)
@@ -61,25 +62,56 @@ class ACMFEngine:
         current_state, init_diag = self.reflector.reflect_state(initial_state)
         states_history[0] = current_state
 
+        # Начальное forcing и dA/dt
+        init_forcing = forcing_profile.evaluate(t_start) if forcing_profile is not None else None
+        init_d_a_dt = float(init_forcing.dA_dt) if init_forcing is not None else 0.0
+
         initial_drift = drift_fn(current_state, 0.0, 0.0, 0.0, 0.0)
         drifts_history[0] = initial_drift
-        self.history.append(t_start, current_state, initial_drift)
+        self.history.append(t_start, current_state, initial_drift, d_a_dt=init_d_a_dt)
 
         for step_idx in range(n_steps - 1):
             t_curr = times[step_idx]
 
-            # dA/dt читается каузально: либо из явной функции, либо из буфера внешнего forcing.
-            # В полной реализации dA/dt должен писаться в буфер истории как exogenous signal.
-            d_a_dt = float(d_a_dt_fn(t_curr)) if d_a_dt_fn is not None else 0.0
-            d_prod_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=5)
-            d_inst_dt = CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_t, component_idx=3)
-            d_agg_obs_dt = (
-                CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_ref, component_idx=0)
-                + CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_ref, component_idx=1)
-                + CausalDelayLookup.get_delayed_derivative(self.history, t_curr, delay_ref, component_idx=2)
-            ) / 3.0
+            # Текущее forcing записывается в history
+            if forcing_profile is not None:
+                forcing = forcing_profile.evaluate(t_curr)
+                current_d_a_dt = float(forcing.dA_dt)
+            else:
+                current_d_a_dt = 0.0
 
-            drift = drift_fn(current_state, d_a_dt, d_prod_dt, d_inst_dt, d_agg_obs_dt)
+            # === КАУЗАЛЬНЫЙ DELAY LOOKUP: читаем ЗАПАЗДЫВАЮЩИЕ производные из history ===
+            if delay_t > 0.0 and self.history.size > 0:
+                d_a_dt_delayed = CausalDelayLookup.get_delayed_forcing_derivative(
+                    self.history, t_curr, delay_t
+                )
+                d_prod_dt = CausalDelayLookup.get_delayed_derivative(
+                    self.history, t_curr, delay_t, component_idx=5
+                )
+                d_inst_dt = CausalDelayLookup.get_delayed_derivative(
+                    self.history, t_curr, delay_t, component_idx=3
+                )
+            else:
+                d_a_dt_delayed = current_d_a_dt
+                d_prod_dt = 0.0
+                d_inst_dt = 0.0
+
+            if delay_ref > 0.0 and self.history.size > 0:
+                d_agg_obs_dt = (
+                    CausalDelayLookup.get_delayed_derivative(
+                        self.history, t_curr, delay_ref, component_idx=0
+                    )
+                    + CausalDelayLookup.get_delayed_derivative(
+                        self.history, t_curr, delay_ref, component_idx=1
+                    )
+                    + CausalDelayLookup.get_delayed_derivative(
+                        self.history, t_curr, delay_ref, component_idx=2
+                    )
+                ) / 3.0
+            else:
+                d_agg_obs_dt = 0.0
+
+            drift = drift_fn(current_state, d_a_dt_delayed, d_prod_dt, d_inst_dt, d_agg_obs_dt)
             sigma, d_sigma = diffusion_fn(current_state)
 
             jump = jump_generator_fn(current_state, t_curr) if jump_generator_fn else np.zeros(self.sid_noise_dim)
@@ -101,7 +133,7 @@ class ACMFEngine:
             states_history[step_idx + 1] = next_state
             drifts_history[step_idx] = drift
             diagnostics.append(diag)
-            self.history.append(times[step_idx + 1], next_state, drift)
+            self.history.append(times[step_idx + 1], next_state, drift, d_a_dt=current_d_a_dt)
 
             current_state = next_state
 

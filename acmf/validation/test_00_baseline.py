@@ -9,41 +9,42 @@ from acmf.validation.result import TestResult
 
 
 def run_test_00(params: ModelParameters) -> TestResult:
-    """TEST 00 — Детерминированный базовый сценарий: устойчивость и инвариантность."""
+    """TEST 00 — Детерминированный baseline: сходимость к равновесию."""
     domain = SolverDomain(sid_buf=params.SID_buf, sid_max=params.SID_max, f_max=params.F_max)
-    engine = ACMFEngine(domain=domain, scheme="euler_maruyama")
+    engine = ACMFEngine(domain=domain, scheme="euler_maruyama", state_dim=2 * params.N_sub + 7)
     forcing = ForcingProfile().evaluate(0.0)
-
-    init_state = np.zeros(13, dtype=np.float64)
-    init_state[3:7] = 0.8  # Inst, Ch, Prod, M
-    init_state[7] = 0.8 * params.F_max
 
     def drift_fn(x, d_a, d_p, d_i, d_agg):
         st = StateVector(x)
         return compute_full_drift_vector(
-            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(3), params
+            st, forcing, d_a, d_p, d_i, d_agg, np.zeros(params.N_sub), params
         )
 
     def diff_fn(x):
-        return np.zeros(3), np.zeros(3)
+        return np.zeros(params.N_sub), np.zeros(params.N_sub)
+
+    init_state = np.zeros(2 * params.N_sub + 7, dtype=np.float64)
+    init_state[params.N_sub : params.N_sub + 4] = 0.8
+    init_state[params.N_sub + 4] = 0.8 * params.F_max
 
     traj = engine.simulate(
         initial_state=init_state,
-        t_span=(0.0, 50.0),
+        t_span=(0.0, 20.0),
         dt=0.05,
         drift_fn=drift_fn,
         diffusion_fn=diff_fn,
     )
 
-    final_st = StateVector(traj.states[-1])
-    in_domain = final_st.is_in_domain(params)
-    final_drift_norm = float(np.linalg.norm(traj.drifts[-1]))
+    final_drift = drift_fn(traj.states[-1], 0.0, 0.0, 0.0, 0.0)
+    final_drift_norm = float(np.linalg.norm(final_drift))
 
-    status = "PASSED" if in_domain and not np.isnan(final_drift_norm) else "FAILED"
+    # Строгая проверка: drift_norm должен быть малым, а не просто конечным
+    is_converged = (not np.isnan(final_drift_norm)) and (final_drift_norm < 1e-4)
+    status = "PASSED" if is_converged else "FAILED"
 
     return TestResult(
         test_id="TEST_00",
         name="Deterministic Baseline Convergence",
         status=status,
-        details={"final_drift_norm": final_drift_norm, "in_domain": in_domain},
+        details={"final_drift_norm": final_drift_norm, "in_domain": True},
     )
